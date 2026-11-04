@@ -137,6 +137,12 @@ def as_root(cmd):
     raise SystemExit("Need root but found no pkexec, sudo or doas.")
 
 
+def as_root_all(cmds):
+    """One escalation for every command in cmds, joined with &&."""
+    script = " && ".join(shlex.join(map(str, cmd)) for cmd in cmds)
+    return as_root(["sh", "-c", script])
+
+
 def run(cmd, *, check=True, capture=False, **kwargs):
     """Run an external command, echoing it. Honors DRY_RUN. Never uses a shell."""
     print("$ " + shlex.join(map(str, cmd)), flush=True)

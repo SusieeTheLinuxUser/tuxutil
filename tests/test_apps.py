@@ -73,10 +73,12 @@ class CatalogTest(unittest.TestCase):
             packages = app["packages"]
             self.assertIsInstance(packages, dict)
             for family, names in packages.items():
-                self.assertIn(family, system.INSTALL_CMD)
                 self.assertIsInstance(names, list)
-                self.assertTrue(names)
                 self.assertTrue(all(isinstance(name, str) and name for name in names))
+                if family == "ubuntu":
+                    continue
+                self.assertIn(family, system.INSTALL_CMD)
+                self.assertTrue(names)
             flatpak = app.get("flatpak") or ""
             self.assertIsInstance(flatpak, str)
             for family in FAMILIES:
@@ -97,6 +99,22 @@ class CatalogTest(unittest.TestCase):
         self.assertTrue(apps.view(both, "debian", set(), {"org.mozilla.firefox"})["installed"])
 
 
+FLATHUB_URL = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+
+def flatpak_install(*ids):
+    return [
+        ["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_URL],
+        ["flatpak", "install", "--user", "-y", "flathub", *ids],
+    ]
+
+
+def assert_flatpak_unprivileged(testcase, text):
+    for line in text.splitlines():
+        if line.startswith("$ ") and "flatpak" in line:
+            testcase.assertFalse(line.startswith(("$ pkexec ", "$ sudo ", "$ doas ")), line)
+
+
 class DryRunTest(unittest.TestCase):
     def test_native_package_per_family(self):
         expected = {
@@ -113,7 +131,8 @@ class DryRunTest(unittest.TestCase):
             if family in expected:
                 self.assertEqual(got, [expected[family]])
             else:
-                self.assertEqual(got, [["flatpak", "install", "-y", "flathub", "org.mozilla.firefox"]])
+                self.assertEqual(got, flatpak_install("org.mozilla.firefox"))
+                assert_flatpak_unprivileged(self, out)
 
     def test_native_apps_share_one_command(self):
         with as_family("arch"):
@@ -133,16 +152,23 @@ class DryRunTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(commands(out), [
             ["pacman", "-S", "--needed", "--noconfirm", "firefox"],
-            ["flatpak", "install", "-y", "flathub", "com.spotify.Client"],
+            *flatpak_install("com.spotify.Client"),
         ])
+        assert_flatpak_unprivileged(self, out)
 
     def test_flatpak_only_skips_the_package_manager(self):
         with as_family("fedora"):
             rc, out, _ = invoke(["--dry-run", "apps", "install", "spotify", "brave"])
         self.assertEqual(rc, 0)
-        self.assertEqual(commands(out), [[
-            "flatpak", "install", "-y", "flathub", "com.spotify.Client", "com.brave.Browser",
-        ]])
+        self.assertEqual(commands(out), flatpak_install("com.spotify.Client", "com.brave.Browser"))
+        assert_flatpak_unprivileged(self, out)
+
+    def test_remove_flatpak_is_per_user(self):
+        with as_family("arch"):
+            rc, out, _ = invoke(["--dry-run", "apps", "remove", "spotify"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(commands(out), [["flatpak", "uninstall", "--user", "-y", "com.spotify.Client"]])
+        assert_flatpak_unprivileged(self, out)
 
     def test_remove_uses_the_remove_command(self):
         with as_family("fedora"):
@@ -195,6 +221,73 @@ class DryRunTest(unittest.TestCase):
         self.assertTrue(by_id["firefox"]["installed"])
         self.assertTrue(by_id["firefox"]["available"])
         self.assertFalse(by_id["git"]["installed"])
+
+
+class UbuntuPackagesTest(unittest.TestCase):
+    def test_ubuntu_overrides_missing_and_snap_debs(self):
+        catalog = {app["id"]: app for app in apps.load()}
+        ubuntu = system.Distro("ubuntu", "Ubuntu", "debian")
+        mint = system.Distro("linuxmint", "Linux Mint", "debian")
+        debian = system.Distro("debian", "Debian", "debian")
+        for app_id in ("firefox", "chromium", "thunderbird", "prism-launcher", "telegram", "fastfetch", "gamescope"):
+            for distro in (ubuntu, mint):
+                self.assertEqual(apps.packages_for(catalog[app_id], distro), [], app_id)
+        self.assertEqual(apps.packages_for(catalog["firefox"], debian), ["firefox-esr"])
+        self.assertEqual(apps.packages_for(catalog["chromium"], debian), ["chromium"])
+        self.assertEqual(apps.packages_for(catalog["thunderbird"], debian), ["thunderbird"])
+        self.assertEqual(apps.packages_for(catalog["git"], ubuntu), ["git"])
+
+    def test_id_like_ubuntu_uses_the_override(self):
+        firefox = next(app for app in apps.load() if app["id"] == "firefox")
+        distro = system.Distro("myubuntu", "My Ubuntu", "debian")
+        release = 'ID=myubuntu\nID_LIKE="ubuntu debian"\n'
+        with mock.patch("tuxutil.apps.Path.read_text", return_value=release):
+            self.assertEqual(apps.packages_for(firefox, distro), [])
+        release = "ID=myubuntu\nID_LIKE=debian\n"
+        with mock.patch("tuxutil.apps.Path.read_text", return_value=release):
+            self.assertEqual(apps.packages_for(firefox, distro), ["firefox-esr"])
+
+    def test_ubuntu_firefox_installs_flatpak_not_esr(self):
+        distro = system.Distro("ubuntu", "Ubuntu", "debian")
+        with mock.patch("tuxutil.system.detect", return_value=distro):
+            rc, out, err = invoke(["--dry-run", "apps", "install", "firefox"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(commands(out), flatpak_install("org.mozilla.firefox"))
+        self.assertNotIn("firefox-esr", out)
+        self.assertNotIn("apt-get", out)
+        assert_flatpak_unprivileged(self, out)
+
+    def test_ubuntu_fastfetch_is_not_available(self):
+        distro = system.Distro("linuxmint", "Linux Mint", "debian")
+        with mock.patch("tuxutil.system.detect", return_value=distro):
+            rc, out, err = invoke(["--dry-run", "apps", "install", "fastfetch"])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Not available", err + out)
+        self.assertEqual(commands(out), [])
+
+
+class RootBatchTest(unittest.TestCase):
+    def test_one_root_step_is_not_wrapped(self):
+        steps = [(True, ["apt-get", "install", "-y", "git"]), (False, ["flatpak", "install", "--user", "-y", "x"])]
+        with mock.patch("tuxutil.system.run") as run, \
+                mock.patch("tuxutil.system.as_root", side_effect=lambda cmd: ["sudo", *cmd]) as one, \
+                mock.patch("tuxutil.system.as_root_all") as batch, \
+                redirect_stdout(io.StringIO()):
+            apps._run_steps(steps)
+        one.assert_called_once_with(["apt-get", "install", "-y", "git"])
+        batch.assert_not_called()
+        self.assertEqual(run.call_count, 2)
+
+    def test_two_root_steps_share_one_prompt(self):
+        steps = [(True, ["pacman", "-Sy"]), (True, ["pacman", "-Su"])]
+        with mock.patch("tuxutil.system.run") as run, \
+                mock.patch("tuxutil.system.as_root") as one, \
+                mock.patch("tuxutil.system.as_root_all", return_value=["sudo", "sh", "-c", "joined"]) as batch, \
+                redirect_stdout(io.StringIO()):
+            apps._run_steps(steps)
+        one.assert_not_called()
+        batch.assert_called_once_with([["pacman", "-Sy"], ["pacman", "-Su"]])
+        run.assert_called_once_with(["sudo", "sh", "-c", "joined"])
 
 
 if __name__ == "__main__":

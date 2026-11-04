@@ -65,18 +65,49 @@ def cmd_list(args):
 
 def run_actions(args, key):
     distro = system.detect()
-    tweaks = select(load(), args.ids)
-    missing = [tweak["id"] for tweak in tweaks if not available(tweak, distro.family)]
+    chosen = select(load(), args.ids)
+    missing = [tweak["id"] for tweak in chosen if not available(tweak, distro.family)]
     if missing:
         raise SystemExit(f"Not available on {distro.family}: {', '.join(missing)}")
-    steps = [(tweak, cmd) for tweak in tweaks for cmd in tweak[key]]
-    system.progress(0, f"{key} {len(tweaks)} tweak(s)")
-    for index, (tweak, cmd) in enumerate(steps, start=1):
-        system.progress(int(index * 100 / (len(steps) + 1)), tweak["id"])
-        if tweak.get("root", True):
-            system.run(system.as_root(cmd))
+
+    runnable = []
+    for tweak in chosen:
+        state = applied(tweak)
+        if key == "apply" and state is True:
+            print(f"skipping {tweak['id']}: already applied")
+            continue
+        if key == "undo" and state is False:
+            print(f"skipping {tweak['id']}: not applied")
+            continue
+        # None means the check could not run, so proceed either way.
+        runnable.append(tweak)
+    if not runnable:
+        system.progress(100, "nothing to do")
+        return 0
+
+    steps = []
+    for tweak in runnable:
+        root = bool(tweak.get("root", True))
+        for cmd in tweak[key]:
+            steps.append((tweak["id"], cmd, root))
+    groups = []
+    for tweak_id, cmd, root in steps:
+        if groups and groups[-1][0] == root:
+            groups[-1][1].append((tweak_id, cmd))
         else:
-            system.run(cmd)
+            groups.append((root, [(tweak_id, cmd)]))
+
+    system.progress(0, f"{key} {len(runnable)} tweak(s)")
+    total = len(groups)
+    for index, (root, items) in enumerate(groups, start=1):
+        label = ",".join(dict.fromkeys(tweak_id for tweak_id, _ in items))
+        system.progress(int(index * 100 / (total + 1)), label)
+        cmds = [cmd for _, cmd in items]
+        if root:
+            system.run(system.as_root_all(cmds))
+        else:
+            for cmd in cmds:
+                system.run(cmd)
     system.progress(100, "done")
     return 0
 

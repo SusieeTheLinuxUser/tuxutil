@@ -37,12 +37,46 @@ def installed_names(family):
     return native, flatpaks
 
 
-def packages_for(app, family):
-    return list(app.get("packages", {}).get(family) or [])
+# IDs that ship Ubuntu's archives (or say ID_LIKE=ubuntu). Debian itself is not in this set.
+UBUNTU_IDS = {
+    "ubuntu", "linuxmint", "pop", "zorin", "elementary", "neon", "kubuntu", "xubuntu",
+    "lubuntu", "ubuntu-mate", "tuxedo", "ubuntustudio", "ubuntu-core",
+}
+FLATHUB_URL = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 
 
-def view(app, family, native, flatpaks):
-    pkgs = packages_for(app, family)
+def _distro(value):
+    if isinstance(value, system.Distro):
+        return value
+    return system.Distro(value, value, value)
+
+
+def _wants_ubuntu(distro):
+    """True for Ubuntu and derivatives. Debian proper stays on the debian package names."""
+    if distro.id in UBUNTU_IDS:
+        return True
+    if distro.family != "debian" or distro.id == "debian":
+        return False
+    try:
+        info = system.parse_os_release(Path("/etc/os-release").read_text())
+    except OSError:
+        return False
+    if info.get("ID", "").lower() != distro.id:
+        return False
+    return "ubuntu" in info.get("ID_LIKE", "").lower().split()
+
+
+def packages_for(app, distro):
+    """Package names for this distro. An ubuntu override wins over the debian family list."""
+    distro = _distro(distro)
+    packages = app.get("packages") or {}
+    if _wants_ubuntu(distro) and "ubuntu" in packages:
+        return list(packages["ubuntu"] or [])
+    return list(packages.get(distro.family) or [])
+
+
+def view(app, distro, native, flatpaks):
+    pkgs = packages_for(app, distro)
     flatpak = app.get("flatpak") or ""
     native_ok = bool(pkgs) and all(pkg in native for pkg in pkgs)
     flatpak_ok = bool(flatpak) and flatpak in flatpaks
@@ -74,11 +108,11 @@ def dedupe(items):
     return out
 
 
-def plan(apps, family):
+def plan(apps, distro):
     """Native packages in one group, flatpak ids in another. Native wins when both exist."""
     native, flatpaks, unavailable = [], [], []
     for app in apps:
-        pkgs = packages_for(app, family)
+        pkgs = packages_for(app, distro)
         if pkgs:
             native.extend(pkgs)
         elif app.get("flatpak"):
@@ -89,24 +123,50 @@ def plan(apps, family):
 
 
 def commands_for(native, flatpaks, family, verb):
+    """Return (needs_root, argv) steps. Flatpak uses the per-user remote and needs no root."""
     table = system.INSTALL_CMD if verb == "install" else system.REMOVE_CMD
-    cmds = []
+    steps = []
     if native:
         if family not in table:
             raise SystemExit(f"Don't know how to {verb} native packages on family '{family}'.")
-        cmds.append([*table[family], *native])
+        steps.append((True, [*table[family], *native]))
     if flatpaks:
         if verb == "install":
-            cmds.append(["flatpak", "install", "-y", "flathub", *flatpaks])
+            steps.append((False, [
+                "flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_URL,
+            ]))
+            steps.append((False, ["flatpak", "install", "--user", "-y", "flathub", *flatpaks]))
         else:
-            cmds.append(["flatpak", "uninstall", "-y", *flatpaks])
-    return cmds
+            steps.append((False, ["flatpak", "uninstall", "--user", "-y", *flatpaks]))
+    return steps
+
+
+def _run_steps(steps):
+    """Run install steps. More than one root step shares a single escalation."""
+    root_count = sum(1 for root, _ in steps if root)
+    batch_root = root_count > 1
+    groups = []
+    for root, cmd in steps:
+        if batch_root and root and groups and groups[-1][0]:
+            groups[-1][1].append(cmd)
+        else:
+            groups.append((root, [cmd]))
+    total = len(groups)
+    for index, (root, cmds) in enumerate(groups, start=1):
+        system.progress(int(index * 100 / (total + 1)), " ".join(cmds[0][:3]))
+        if root and batch_root:
+            system.run(system.as_root_all(cmds))
+        elif root:
+            system.run(system.as_root(cmds[0]))
+        else:
+            for cmd in cmds:
+                system.run(cmd)
 
 
 def cmd_list(args):
     distro = system.detect()
     native, flatpaks = installed_names(distro.family)
-    rows = [view(app, distro.family, native, flatpaks) for app in load()]
+    rows = [view(app, distro, native, flatpaks) for app in load()]
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
@@ -124,16 +184,14 @@ def cmd_list(args):
 def change(args, verb):
     distro = system.detect()
     apps = select(load(), args.ids)
-    native, flatpaks, unavailable = plan(apps, distro.family)
+    native, flatpaks, unavailable = plan(apps, distro)
     if unavailable:
         raise SystemExit(f"Not available on {distro.family}: {', '.join(unavailable)}")
-    cmds = commands_for(native, flatpaks, distro.family, verb)
-    if not cmds:
+    steps = commands_for(native, flatpaks, distro.family, verb)
+    if not steps:
         raise SystemExit("Nothing to do.")
     system.progress(0, f"{verb} {len(apps)} app(s)")
-    for index, cmd in enumerate(cmds, start=1):
-        system.progress(int(index * 100 / (len(cmds) + 1)), " ".join(cmd[:3]))
-        system.run(system.as_root(cmd))
+    _run_steps(steps)
     system.progress(100, "done")
     return 0
 

@@ -3,7 +3,7 @@
     "id": "firefox",
     "name": "Firefox",
     "category": "browsers",
-    "description": "Mozilla Firefox. Debian and Ubuntu get firefox-esr, a real deb rather than Ubuntu's snap wrapper.",
+    "description": "Mozilla Firefox. Debian installs firefox-esr. Ubuntu and its derivatives use Flathub: firefox-esr is not in Ubuntu 24.04, and Ubuntu's firefox deb is a snap wrapper.",
     "packages": {
       "arch": [
         "firefox"
@@ -16,7 +16,8 @@
       ],
       "suse": [
         "MozillaFirefox"
-      ]
+      ],
+      "ubuntu": []
     },
     "flatpak": "org.mozilla.firefox"
   },
@@ -24,7 +25,7 @@
     "id": "chromium",
     "name": "Chromium",
     "category": "browsers",
-    "description": "Chromium browser. Ubuntu does not ship this deb (it is a snap there); Debian, Fedora, and openSUSE do.",
+    "description": "Chromium browser. Debian installs the deb. Ubuntu 24.04 has no chromium deb, so Ubuntu and its derivatives use Flathub.",
     "packages": {
       "arch": [
         "chromium"
@@ -37,7 +38,8 @@
       ],
       "suse": [
         "chromium"
-      ]
+      ],
+      "ubuntu": []
     },
     "flatpak": "org.chromium.Chromium"
   },
@@ -583,7 +585,7 @@
     "id": "prism-launcher",
     "name": "Prism Launcher",
     "category": "gaming",
-    "description": "Minecraft launcher. Fedora uses the Flathub build.",
+    "description": "Prism Launcher for Minecraft. Ubuntu 24.04 does not ship prismlauncher, so Ubuntu and its derivatives use Flathub.",
     "packages": {
       "arch": [
         "prismlauncher"
@@ -593,7 +595,8 @@
       ],
       "suse": [
         "prismlauncher"
-      ]
+      ],
+      "ubuntu": []
     },
     "flatpak": "org.prismlauncher.PrismLauncher"
   },
@@ -613,7 +616,7 @@
     "id": "gamescope",
     "name": "Gamescope",
     "category": "gaming",
-    "description": "Valve's micro-compositor for games.",
+    "description": "Gamescope micro-compositor. Ubuntu 24.04 does not ship this package, so the app is not offered there.",
     "packages": {
       "arch": [
         "gamescope"
@@ -626,7 +629,8 @@
       ],
       "suse": [
         "gamescope"
-      ]
+      ],
+      "ubuntu": []
     }
   },
   {
@@ -927,7 +931,7 @@
     "id": "thunderbird",
     "name": "Thunderbird",
     "category": "office",
-    "description": "Thunderbird mail client.",
+    "description": "Thunderbird mail. Debian installs the deb. Ubuntu's thunderbird deb is a transitional package for the snap, so Ubuntu and its derivatives use Flathub.",
     "packages": {
       "arch": [
         "thunderbird"
@@ -940,7 +944,8 @@
       ],
       "suse": [
         "MozillaThunderbird"
-      ]
+      ],
+      "ubuntu": []
     },
     "flatpak": "org.mozilla.Thunderbird"
   },
@@ -1064,7 +1069,7 @@
     "id": "telegram",
     "name": "Telegram",
     "category": "chat",
-    "description": "Telegram Desktop. Fedora uses the Flathub build.",
+    "description": "Telegram Desktop. Ubuntu 24.04 does not ship telegram-desktop, so Ubuntu and its derivatives use Flathub.",
     "packages": {
       "arch": [
         "telegram-desktop"
@@ -1074,7 +1079,8 @@
       ],
       "suse": [
         "telegram-desktop"
-      ]
+      ],
+      "ubuntu": []
     },
     "flatpak": "org.telegram.desktop"
   },
@@ -1155,7 +1161,7 @@
     "id": "fastfetch",
     "name": "fastfetch",
     "category": "utilities",
-    "description": "fastfetch system information.",
+    "description": "Fastfetch system information. Ubuntu 24.04 does not ship this package, so the app is not offered there.",
     "packages": {
       "arch": [
         "fastfetch"
@@ -1168,7 +1174,8 @@
       ],
       "suse": [
         "fastfetch"
-      ]
+      ],
+      "ubuntu": []
     }
   },
   {

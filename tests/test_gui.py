@@ -119,7 +119,7 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertEqual(self.win.nav.currentItem().text(), "Tweaks")
 
     def test_group_titles_clear_their_contents(self):
-        """The owner's bug: inputs were drawn on top of the card titles."""
+        """Inputs must not sit on a card's title. This misses the Breeze overlap the owner hit, which Fusion replaces."""
         for i in range(self.win.tabs.count()):
             self.win.tabs.setCurrentIndex(i)
             pump_events(50)
@@ -164,6 +164,46 @@ class TestTuxUtilGui(unittest.TestCase):
         tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
         tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
         self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
+
+    def test_download_catalog_is_split_by_kind(self):
+        self.win.tabs.setCurrentIndex(5)
+        tab = self.win.tab_linuxiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        self.assertEqual(tab.download_combo.itemText(0), "Arch Linux")
+        self.assertTrue(tab.download_row.isVisible())
+
+    def test_download_fills_the_source_iso(self):
+        self.win.tabs.setCurrentIndex(5)
+        tab = self.win.tab_linuxiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        tab.download_combo.setCurrentIndex(0)
+        self.assertEqual(tab.btn_download.text(), "Download")
+        tab.on_download_clicked()
+        self.assertTrue(wait_until(lambda: tab.iso_path_edit.text() == "/fake/path/archlinux-live.iso"))
+        self.assertIn("iso download arch", self.win.log_text.toPlainText())
+
+    def test_page_only_entry_opens_the_browser_and_shows_its_note(self):
+        self.win.tabs.setCurrentIndex(4)
+        tab = self.win.tab_winiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        tab.download_combo.setCurrentIndex(0)
+        self.assertEqual(tab.btn_download.text(), "Open Download Page")
+        self.assertEqual(tab.lbl_download_note.text(), "Links expire.")
+        with patch.object(gui.QDesktopServices, "openUrl") as open_url, patch.object(self.win, "run_cli_job") as job:
+            tab.on_download_clicked()
+        self.assertEqual(open_url.call_args[0][0].toString(), "https://example.test/win")
+        job.assert_not_called()
+
+    def test_pasted_link_goes_to_the_cli_and_junk_does_not(self):
+        tab = self.win.tab_linuxiso
+        with patch.object(self.win, "run_cli_job") as job, patch.object(gui.QMessageBox, "warning") as warn:
+            tab.download_combo.setEditText("file:///etc/passwd")
+            tab.on_download_clicked()
+            job.assert_not_called()
+            warn.assert_called_once()
+            tab.download_combo.setEditText("https://example.test/a.iso")
+            tab.on_download_clicked()
+        self.assertEqual(job.call_args[0][0], ["iso", "download", "https://example.test/a.iso"])
 
     def test_window_properties_and_tabs(self):
         self.assertEqual(self.win.windowTitle(), "TuxUtil")

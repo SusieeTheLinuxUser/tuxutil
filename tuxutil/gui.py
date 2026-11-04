@@ -10,8 +10,8 @@ from pathlib import Path
 
 # PySide6 is imported lazily so tuxutil can run headless in CI without GUI dependencies.
 try:
-    from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTemporaryDir, QTimer, Signal
-    from PySide6.QtGui import QColor, QFont, QPalette
+    from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTemporaryDir, QTimer, QUrl, Signal
+    from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -702,7 +702,9 @@ if HAS_PYSIDE6:
 
             # Source ISO Picker
             source_group = QGroupBox("Source ISO")
-            s_layout = QHBoxLayout(source_group)
+            source_box = QVBoxLayout(source_group)
+            s_layout = QHBoxLayout()
+            source_box.addLayout(s_layout)
             self.iso_path_edit = QLineEdit()
             self.iso_path_edit.setPlaceholderText("Choose an ISO file...")
             self.iso_path_edit.setAccessibleName(f"{flavor} Source ISO Path")
@@ -712,6 +714,28 @@ if HAS_PYSIDE6:
             btn_browse_iso.clicked.connect(self.browse_source_iso)
             s_layout.addWidget(self.iso_path_edit)
             s_layout.addWidget(btn_browse_iso)
+
+            # Download: pick from the catalog or paste a link. Stays hidden until the catalog has loaded.
+            self.download_row = QWidget()
+            d_layout = QHBoxLayout(self.download_row)
+            d_layout.setContentsMargins(0, 0, 0, 0)
+            self.download_combo = QComboBox()
+            self.download_combo.setEditable(True)
+            self.download_combo.setInsertPolicy(QComboBox.NoInsert)
+            self.download_combo.lineEdit().setPlaceholderText("Or pick an ISO to download, or paste a link...")
+            self.download_combo.setAccessibleName(f"{flavor} ISO to download")
+            self.download_combo.currentTextChanged.connect(self.on_download_choice_changed)
+            self.btn_download = QPushButton("Download")
+            self.btn_download.clicked.connect(self.on_download_clicked)
+            d_layout.addWidget(self.download_combo, 1)
+            d_layout.addWidget(self.btn_download)
+            self.download_row.setVisible(False)
+            source_box.addWidget(self.download_row)
+            self.lbl_download_note = QLabel("")
+            self.lbl_download_note.setObjectName("hint")
+            self.lbl_download_note.setWordWrap(True)
+            self.lbl_download_note.setVisible(False)
+            source_box.addWidget(self.lbl_download_note)
             layout.addWidget(source_group)
 
             # Info Group: stays hidden until an ISO has been read.
@@ -784,7 +808,55 @@ if HAS_PYSIDE6:
             if fn:
                 self.out_path_edit.setText(fn)
 
+        def load_download_catalog(self):
+            def on_done(exit_code, stdout, stderr):
+                try:
+                    entries = json.loads(stdout) if exit_code == 0 else []
+                except ValueError:
+                    entries = []
+                kind = "windows" if self.flavor == "winiso" else "linux"
+                self.download_combo.clear()
+                for entry in entries:
+                    if entry.get("kind") == kind:
+                        self.download_combo.addItem(entry.get("name", entry.get("id", "")), entry)
+                self.download_combo.setCurrentIndex(-1)
+                self.download_row.setVisible(True)
+
+            self.main_win.run_cli_query(["iso", "list", "--json"], on_done)
+
+        def selected_download(self):
+            """The catalog entry the combo's text names, or None for a pasted link."""
+            i = self.download_combo.findText(self.download_combo.currentText().strip())
+            return self.download_combo.itemData(i) if i >= 0 else None
+
+        def on_download_choice_changed(self):
+            entry = self.selected_download()
+            page_only = bool(entry) and not entry.get("direct")
+            self.btn_download.setText("Open Download Page" if page_only else "Download")
+            note = entry.get("notes", "") if entry else ""
+            self.lbl_download_note.setText(note)
+            self.lbl_download_note.setVisible(bool(note))
+
+        def on_download_clicked(self):
+            entry = self.selected_download()
+            if entry and not entry.get("direct"):
+                QDesktopServices.openUrl(QUrl(entry.get("page", "")))
+                return
+            target = entry["id"] if entry else self.download_combo.currentText().strip()
+            if not entry and not target.startswith(("http://", "https://")):
+                QMessageBox.warning(self, "Nothing to Download", "Pick an ISO from the list, or paste a link starting with http:// or https://.")
+                return
+
+            def on_success():
+                if self.main_win.last_saved_path:
+                    self.iso_path_edit.setText(self.main_win.last_saved_path)
+
+            self.main_win.run_cli_job(["iso", "download", target], f"Downloading {self.download_combo.currentText().strip()}", on_finished=on_success)
+
         def load_options(self):
+            if not self.download_combo.count():
+                self.load_download_catalog()
+
             def on_done(exit_code, stdout, stderr):
                 if exit_code != 0:
                     self.banner.show_error(
@@ -908,6 +980,7 @@ if HAS_PYSIDE6:
             self.active_process = None
             self.active_job_is_flash = False
             self.last_built_iso = ""
+            self.last_saved_path = ""
             self._active_queries = set()
             self._closing = False
 
@@ -1471,6 +1544,7 @@ if HAS_PYSIDE6:
                 return
 
             self.active_job_is_flash = is_flash
+            self.last_saved_path = ""
             base_cmd = get_cli_base_cmd()
             args, password = split_password(args)
             full_cmd = base_cmd + args
@@ -1515,6 +1589,8 @@ if HAS_PYSIDE6:
                         except ValueError:
                             pass
                     else:
+                        if line.startswith("@saved "):
+                            self.last_saved_path = line[len("@saved "):]
                         self.log_text.appendPlainText(line)
 
             def on_out():
@@ -1576,6 +1652,8 @@ if HAS_PYSIDE6:
             self.tab_tweaks.btn_act1.setEnabled(enabled)
             self.tab_tweaks.btn_act2.setEnabled(enabled)
             self.btn_run_update.setEnabled(enabled)
+            self.tab_winiso.btn_download.setEnabled(enabled)
+            self.tab_linuxiso.btn_download.setEnabled(enabled)
             self.tab_winiso.btn_build.setEnabled(enabled)
             self.tab_linuxiso.btn_build.setEnabled(enabled and (self.tab_linuxiso.lbl_supported.text() == "Supported"))
             self.validate_flash_confirm()

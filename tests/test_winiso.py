@@ -437,13 +437,13 @@ class TestBootRecordSelection(unittest.TestCase):
         if regular:
             open(os.path.join(root, "efi", "microsoft", "boot", "efisys.bin"), "w").close()
 
-    def test_uefi_noprompt_preferred(self):
+    def test_uefi_prompting_image_preferred(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             self._tree(d, noprompt=True, regular=True)
             _bios, uefi, rel = winiso.choose_boot_files(d)
-            self.assertTrue(uefi.endswith("efisys_noprompt.bin"))
-            self.assertEqual(rel, "efi/microsoft/boot/efisys_noprompt.bin")
+            self.assertTrue(uefi.endswith(os.path.join("boot", "efisys.bin")))
+            self.assertEqual(rel, "efi/microsoft/boot/efisys.bin")
 
     def test_uefi_falls_back_to_efisys(self):
         import tempfile
@@ -508,6 +508,8 @@ class TestWimCommands(unittest.TestCase):
         secret = "p<q>&secret"
         argv = winiso._wim_export_argv("src.wim", 1, "out.esd", "solid")
         iso = winiso._xorriso_argv("/e", "/o.iso", "LABEL", "efi/microsoft/boot/efisys_noprompt.bin")
+        self.assertIn("-omit-version-number", iso)
+        self.assertIn("-omit-period", iso)
         self.assertNotIn(secret, " ".join(argv + iso))
 
 

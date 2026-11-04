@@ -67,6 +67,7 @@ BLOAT_APPS = [
     ("Microsoft.Copilot", True),
     ("Microsoft.MicrosoftTeams", True),
     ("MicrosoftTeams", True),
+    ("MSTeams", True),
 ]
 
 # Files that are not registered provisioned packages, so deleting them is safe.
@@ -776,7 +777,9 @@ def choose_boot_files(root: str):
     regular = os.path.join(root, "efi", "microsoft", "boot", "efisys.bin")
     if not os.path.isfile(bios):
         raise SystemExit(f"BIOS boot record not found: {bios}")
-    uefi = noprompt if os.path.isfile(noprompt) else regular
+    # The prompting image on purpose. No-prompt reboots back into Setup when the
+    # disc is still first in the boot order, which is the normal case in a VM.
+    uefi = regular if os.path.isfile(regular) else noprompt
     if not os.path.isfile(uefi):
         raise SystemExit(f"UEFI boot record not found: tried {noprompt} and {regular}")
     rel = os.path.relpath(uefi, root).replace(os.sep, "/")
@@ -788,6 +791,8 @@ def _xorriso_argv(extract_dir: str, output_path: str, label: str, uefi_rel: str)
     return [
         "xorriso", "-as", "mkisofs",
         "-iso-level", "3",
+        # The BIOS loader looks for a file named exactly BOOTMGR, not BOOTMGR.;1
+        "-omit-version-number", "-omit-period",
         "-joliet", "-joliet-long",
         "-rational-rock",
         "-volid", label,

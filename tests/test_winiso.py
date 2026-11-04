@@ -555,7 +555,7 @@ class TestOptionParsing(unittest.TestCase):
         from tuxutil import system
         self.assertEqual(system.tool_package("7z", "arch"), "7zip")
         self.assertEqual(system.tool_package("7z", "debian"), "p7zip-full")
-        self.assertIn(system.tool_package("7z", "fedora"), ("p7zip", "7zip"))
+        self.assertEqual(system.tool_package("7z", "fedora"), "p7zip-plugins")
         self.assertIn(system.tool_package("7z", "suse"), ("p7zip", "7zip"))
 
 

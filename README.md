@@ -10,7 +10,15 @@
 curl -fsSL https://raw.githubusercontent.com/SusieeTheLinuxUser/tuxutil/main/run.sh | sh
 ```
 
-This runs the latest code from the `main` branch in your cache; you can read [`run.sh`](run.sh) first. It needs Python 3.10 or newer, plus `curl` or `wget` and `tar`. The GUI downloads PySide6-Essentials to the cache if needed. Run `sh install.sh` for a permanent install in `~/.local/bin`. Run `tuxutil doctor` to see which tools are missing, or `tuxutil doctor --install` to install them.
+This runs the latest code from the `main` branch in your cache; you can read [`run.sh`](run.sh) first. It needs Python 3.10 or newer, plus `curl` or `wget` and `tar`. The GUI downloads PySide6-Essentials to the cache if needed. Run `tuxutil doctor` to see which tools are missing, or `tuxutil doctor --install` to install them.
+
+For a permanent install in `~/.local/bin`:
+
+```sh
+git clone https://github.com/SusieeTheLinuxUser/tuxutil.git
+cd tuxutil
+sh install.sh --from-local .
+```
 
 ## Use it
 

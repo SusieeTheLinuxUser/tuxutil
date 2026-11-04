@@ -30,6 +30,8 @@ prepare_app() {
     app_dir=$cache_base/app
     mkdir -p "$cache_base" || fail "cannot create cache directory: $cache_base"
     work=$(mktemp -d "$cache_base/.download.XXXXXX") || fail "cannot create temporary folder in $cache_base"
+    trap 'rm -rf "$work"' EXIT
+    trap 'rm -rf "$work"; exit 130' INT TERM
     url=${TUXUTIL_TARBALL:-https://github.com/SusieeTheLinuxUser/tuxutil/archive/refs/heads/main.tar.gz}
 
     if download "$url" "$work/source.tar.gz"; then
@@ -60,6 +62,7 @@ prepare_app() {
         rm -rf "$work"
         fail 'download failed and no cached copy is available.'
     fi
+    trap - EXIT INT TERM
 }
 
 run_app() {
@@ -69,15 +72,17 @@ run_app() {
     is_gui=0
     if [ "$#" -eq 0 ] || [ "$1" = gui ]; then is_gui=1; fi
 
-    if [ "$is_gui" -eq 1 ] && ! python3 -c 'import PySide6' >/dev/null 2>&1; then
+    if [ "$is_gui" -eq 1 ] && ! python3 -c 'import PySide6.QtWidgets' >/dev/null 2>&1; then
         venv_python=$cache_base/venv/bin/python
         if [ ! -x "$venv_python" ] && ! python3 -m venv --system-site-packages "$cache_base/venv"; then
+            # A failed venv leaves a python behind, which the next run would wrongly reuse.
+            rm -rf "$cache_base/venv"
             printf '%s\n' 'TuxUtil: could not create its GUI venv; on Debian or Ubuntu install python3-venv. The CLI still works.' >&2
             return 1
         fi
         venv_python=$cache_base/venv/bin/python
-        if ! "$venv_python" -c 'import PySide6' >/dev/null 2>&1; then
-            printf '%s\n' 'TuxUtil: downloading PySide6-Essentials (about 100 MB) for the GUI...' >&2
+        if ! "$venv_python" -c 'import PySide6.QtWidgets' >/dev/null 2>&1; then
+            printf '%s\n' 'TuxUtil: first GUI run: downloading PySide6-Essentials (about 85 MB, 260 MB on disk) to the cache...' >&2
             if ! "$venv_python" -m pip install PySide6-Essentials; then
                 printf '%s\n' 'TuxUtil: GUI dependency installation failed; the CLI still works.' >&2
                 return 1

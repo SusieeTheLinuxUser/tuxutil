@@ -136,6 +136,17 @@ class IsoDownloadTests(unittest.TestCase):
             self.assertEqual((folder / "folder.iso").read_bytes(), DATA)
             self.assertEqual(list(folder.iterdir()), [folder / "folder.iso"])
 
+    def test_server_named_download_still_resumes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "disposition.part").write_bytes(DATA[:20])
+            with patch.object(isodl.system, "progress") as progress:
+                self.assertEqual(self.run_download(self.base + "/disposition", folder,
+                                                   sha256=hashlib.sha256(DATA).hexdigest()), 0)
+            self.assertEqual(list(folder.iterdir()), [folder / "folder.iso"])
+            self.assertEqual((folder / "folder.iso").read_bytes(), DATA)
+            progress.assert_any_call(98, "Downloading folder.iso")
+
     def test_file_url_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self.run_download("file:///etc/passwd", Path(tmp)), 1)

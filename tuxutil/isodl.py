@@ -163,8 +163,8 @@ def cmd_download(args):
                 print(f"@saved {final.absolute()}")
                 return 0
             raise ValueError(f"Refusing to overwrite existing file: {final}")
-        # ponytail: a pasted link whose file changed between runs resumes into a mixed file. Only a checksum
-        # catches that, and it's why links without one print the "could not verify" line. Needs an ETag check to fix.
+        # ponytail: a pasted link whose file changed, or another link with the same name, resumes into a mixed file.
+        # Only a checksum catches that, which is why links without one print "could not verify". Needs an ETag check.
         response, offset = _open_resuming(url, part)
         total = offset
         if response:
@@ -187,8 +187,8 @@ def cmd_download(args):
                         raise ValueError(f"Not enough free space: need {needed} bytes, have {free}.")
                 if not output and not entry:
                     # The server's name beats the link's. Catalog files keep the name their checksum list uses.
+                    # The .part keeps the link's name, because that's what the next run looks for to resume.
                     final = folder / _response_name(response, url)
-                    part = final.with_name(final.name + ".part")
                     if final.exists():
                         raise ValueError(f"Refusing to overwrite existing file: {final}")
                 received = offset

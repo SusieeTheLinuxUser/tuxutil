@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+import urllib.parse
 from pathlib import Path
 
 # PySide6 is imported lazily so tuxutil can run headless in CI without GUI dependencies.
@@ -73,9 +74,16 @@ def mask_command_for_log(cmd):
             continue
         arg_str = str(arg)
         lower = arg_str.lower()
-        if lower.startswith(("http://", "https://")) and "?" in arg_str:
-            # A signed download link's query string is its password.
-            masked.append(arg_str.split("?", 1)[0] + "?******")
+        if lower.startswith(("http://", "https://")):
+            # A signed link's query string is its password, and a link can also carry user:password@.
+            try:
+                url = urllib.parse.urlsplit(arg_str)
+            except ValueError:
+                masked.append("******")
+                continue
+            masked.append(url._replace(
+                netloc=url.netloc.rsplit("@", 1)[-1], query="******" if url.query else "", fragment="",
+            ).geturl())
             continue
         if any(kw in lower for kw in ("password", "secret", "token")):
             if "=" in arg_str:
@@ -848,6 +856,8 @@ if HAS_PYSIDE6:
                 return
             target = entry["id"] if entry else self.download_combo.currentText().strip()
             title = f"Downloading {self.download_combo.currentText().strip()}" if entry else "Downloading ISO"
+            # A pasted link may be signed, and other local users can read process arguments.
+            args, env = (["iso", "download", target], None) if entry else (["iso", "download"], {"TUXUTIL_DOWNLOAD_URL": target})
             if not entry and not target.startswith(("http://", "https://")):
                 QMessageBox.warning(self, "Nothing to Download", "Pick an ISO from the list, or paste a link starting with http:// or https://.")
                 return
@@ -856,7 +866,7 @@ if HAS_PYSIDE6:
                 if self.main_win.last_saved_path:
                     self.iso_path_edit.setText(self.main_win.last_saved_path)
 
-            self.main_win.run_cli_job(["iso", "download", target], title, on_finished=on_success)
+            self.main_win.run_cli_job(args, title, on_finished=on_success, env=env)
 
         def load_options(self):
             if not self.download_combo.count():
@@ -1542,7 +1552,7 @@ if HAS_PYSIDE6:
             proc.errorOccurred.connect(on_error)
             proc.start(full_cmd[0], full_cmd[1:])
 
-        def run_cli_job(self, args, job_title="Job", is_flash=False, on_finished=None):
+        def run_cli_job(self, args, job_title="Job", is_flash=False, on_finished=None, env=None):
             """Run a long job via QProcess, streaming log output and parsing @progress lines."""
             if self.active_process is not None:
                 QMessageBox.warning(self, "Job In Progress", "A job is already running. Please wait or cancel it first.")
@@ -1577,10 +1587,14 @@ if HAS_PYSIDE6:
 
             proc = QProcess(self)
             self.active_process = proc
+            env = dict(env or {})
             if password:
-                env = QProcessEnvironment.systemEnvironment()
-                env.insert("TUXUTIL_PASSWORD", password)
-                proc.setProcessEnvironment(env)
+                env["TUXUTIL_PASSWORD"] = password
+            if env:
+                proc_env = QProcessEnvironment.systemEnvironment()
+                for key, value in env.items():
+                    proc_env.insert(key, value)
+                proc.setProcessEnvironment(proc_env)
             line_buf = ""
 
             def handle_stream(text):

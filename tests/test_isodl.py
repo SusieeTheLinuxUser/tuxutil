@@ -1,7 +1,10 @@
 import argparse
+import contextlib
 import hashlib
 import http.server
+import io
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -146,6 +149,31 @@ class IsoDownloadTests(unittest.TestCase):
             self.assertEqual(list(folder.iterdir()), [folder / "folder.iso"])
             self.assertEqual((folder / "folder.iso").read_bytes(), DATA)
             progress.assert_any_call(98, "Downloading folder.iso")
+
+    def test_link_from_the_environment(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"TUXUTIL_DOWNLOAD_URL": self.base + "/env.iso"}):
+            folder = Path(tmp)
+            self.assertEqual(self.run_download(None, folder, sha256=hashlib.sha256(DATA).hexdigest()), 0)
+            self.assertEqual((folder / "env.iso").read_bytes(), DATA)
+
+    def test_invalid_link_error_does_not_quote_it(self):
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_download(self.base + "/a b.iso?sig=SECRET", Path(tmp)), 1)
+        self.assertIn("Download failed", err.getvalue())
+        self.assertNotIn("SECRET", err.getvalue())
+
+    def test_link_with_a_password_is_refused_before_any_lookup(self):
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(err), patch("socket.getaddrinfo") as lookup:
+            self.assertEqual(self.run_download("http://alice:hunter2@example.test/a.iso", Path(tmp)), 1)
+        lookup.assert_not_called()
+        self.assertNotIn("hunter2", err.getvalue())
+
+    def test_no_target_at_all_is_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ"):
+            os.environ.pop("TUXUTIL_DOWNLOAD_URL", None)
+            self.assertEqual(self.run_download(None, Path(tmp)), 1)
 
     def test_file_url_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:

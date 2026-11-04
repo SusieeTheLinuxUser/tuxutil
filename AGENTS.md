@@ -23,7 +23,7 @@ tuxutil linuxiso build ISO -o OUT.iso [options]
 tuxutil flash list --json
 tuxutil flash write ISO DEVICE --confirm DEVICE [--no-verify]
 tuxutil iso list --json
-tuxutil iso download TARGET [-o FILE | --dir DIR] [--sha256 HEX]
+tuxutil iso download [TARGET] [-o FILE | --dir DIR] [--sha256 HEX]    (no TARGET: reads $TUXUTIL_DOWNLOAD_URL)
 tuxutil gui
 ```
 Listing commands print exactly this JSON (extra keys are fine):

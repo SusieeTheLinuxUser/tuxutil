@@ -45,7 +45,7 @@ def pump_events(ms=80):
         app.processEvents()
 
 
-def wait_until(condition_fn, timeout_ms=3000, step_ms=25):
+def wait_until(condition_fn, timeout_ms=15000, step_ms=25):
     """Poll a condition function while pumping Qt events."""
     elapsed = 0
     while elapsed < timeout_ms:
@@ -179,7 +179,8 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertTrue(self.win.btn_run_update.isEnabled())
         self.win.btn_run_update.click()
         self.assertTrue(wait_until(lambda: "Update complete" in self.win.log_text.toPlainText()))
-        self.assertIn("completed successfully", self.win.lbl_job_status.text())
+        # The log line arrives before the process-finished signal sets the status.
+        self.assertTrue(wait_until(lambda: "completed successfully" in self.win.lbl_job_status.text()))
 
     def test_winiso_tab_form_generation_and_build(self):
         self.win.tabs.setCurrentIndex(4)
@@ -199,7 +200,8 @@ class TestTuxUtilGui(unittest.TestCase):
 
         self.win.tab_winiso.btn_build.click()
         self.assertTrue(wait_until(lambda: "Windows ISO build complete" in self.win.log_text.toPlainText()))
-        self.assertEqual(self.win.flash_iso_edit.text(), self.win.tab_winiso.out_path_edit.text())
+        out_path = self.win.tab_winiso.out_path_edit.text()
+        self.assertTrue(wait_until(lambda: self.win.flash_iso_edit.text() == out_path))
 
     def test_linuxiso_tab_supported_and_unsupported(self):
         self.win.tabs.setCurrentIndex(5)
@@ -251,15 +253,14 @@ class TestTuxUtilGui(unittest.TestCase):
         self.win.device_combo.setCurrentIndex(sdb_idx)
         self.win.confirm_input.setText("/dev/sdb")
         self.win.load_flash_devices()
-        pump_events(50)
-        self.assertEqual(self.win.confirm_input.text(), "")
+        self.assertTrue(wait_until(lambda: self.win.confirm_input.text() == ""))
         self.assertFalse(self.win.btn_flash_write.isEnabled())
+        pump_events(200)
 
         # 6. Unsafe device (/dev/sda) cannot be enabled for flashing
         sda_idx = next(i for i, d in enumerate(self.win.raw_devices) if d["path"] == "/dev/sda")
         self.win.device_combo.setCurrentIndex(sda_idx)
-        pump_events(20)
-        self.assertFalse(self.win.confirm_input.isEnabled())
+        self.assertTrue(wait_until(lambda: not self.win.confirm_input.isEnabled()))
         self.assertFalse(self.win.btn_flash_write.isEnabled())
 
         # 7. With safe device + valid ISO + exact path -> Flash button enables

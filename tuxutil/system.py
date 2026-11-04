@@ -188,5 +188,14 @@ def progress(percent, message=""):
 
 
 def self_cmd():
-    """Argv prefix that re-invokes tuxutil, e.g. under pkexec."""
-    return [sys.executable, "-m", "tuxutil"]
+    """Argv prefix that re-invokes tuxutil, e.g. under pkexec.
+
+    Not `python -m`: that searches the current folder first, so a tuxutil/ or json.py there would
+    run instead, as root under sudo. pkexec also drops PYTHONPATH, so the package's folder is named here.
+    """
+    parent = str(Path(__file__).resolve().parent.parent)
+    code = (
+        f"import sys; sys.path[:] = [{parent!r}, *[p for p in sys.path if p]]; "
+        "sys.argv[0] = 'tuxutil'; from tuxutil.cli import main; raise SystemExit(main())"
+    )
+    return [sys.executable, "-c", code]

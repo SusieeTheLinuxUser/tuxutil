@@ -1,6 +1,6 @@
 """PySide6 desktop GUI for TuxUtil.
 
-A frontend over the CLI: runs `python -m tuxutil ...` via QProcess and reads stdout.
+A frontend over the CLI: runs tuxutil's CLI via QProcess and reads stdout.
 """
 import json
 import os
@@ -73,6 +73,10 @@ def mask_command_for_log(cmd):
             continue
         arg_str = str(arg)
         lower = arg_str.lower()
+        if lower.startswith(("http://", "https://")) and "?" in arg_str:
+            # A signed download link's query string is its password.
+            masked.append(arg_str.split("?", 1)[0] + "?******")
+            continue
         if any(kw in lower for kw in ("password", "secret", "token")):
             if "=" in arg_str:
                 flag, _ = arg_str.split("=", 1)
@@ -843,6 +847,7 @@ if HAS_PYSIDE6:
                 QDesktopServices.openUrl(QUrl(entry.get("page", "")))
                 return
             target = entry["id"] if entry else self.download_combo.currentText().strip()
+            title = f"Downloading {self.download_combo.currentText().strip()}" if entry else "Downloading ISO"
             if not entry and not target.startswith(("http://", "https://")):
                 QMessageBox.warning(self, "Nothing to Download", "Pick an ISO from the list, or paste a link starting with http:// or https://.")
                 return
@@ -851,7 +856,7 @@ if HAS_PYSIDE6:
                 if self.main_win.last_saved_path:
                     self.iso_path_edit.setText(self.main_win.last_saved_path)
 
-            self.main_win.run_cli_job(["iso", "download", target], f"Downloading {self.download_combo.currentText().strip()}", on_finished=on_success)
+            self.main_win.run_cli_job(["iso", "download", target], title, on_finished=on_success)
 
         def load_options(self):
             if not self.download_combo.count():
@@ -1550,7 +1555,11 @@ if HAS_PYSIDE6:
             args, password = split_password(args)
             full_cmd = base_cmd + args
 
-            masked_str = mask_command_for_log(full_cmd)
+            # self_cmd's startup code would only be noise here.
+            from . import system
+            prefix = system.self_cmd()
+            shown = ["tuxutil", *full_cmd[len(prefix):]] if full_cmd[:len(prefix)] == prefix else full_cmd
+            masked_str = mask_command_for_log(shown)
             self.log_text.appendPlainText(f"\n$ {masked_str}")
 
             self._set_job_status(f"Running: {job_title}...")

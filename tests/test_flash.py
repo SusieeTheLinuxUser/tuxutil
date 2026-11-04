@@ -408,6 +408,19 @@ class WriteGuardTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(__version__, proc.stdout)
 
+    def test_root_argv_ignores_hostile_files_in_the_current_folder(self):
+        """sudo and doas keep the caller's folder, so a json.py there would otherwise run as root."""
+        argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb")
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "ran"
+            (Path(tmp) / "json.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            (Path(tmp) / "argparse.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            proc = subprocess.run([*argv[:3], "--version"], cwd=tmp, env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(marker.exists())
+
     def test_mode_prefers_hybrid_raw(self):
         self.assertEqual(flash.mode_from_flags(True, True), "raw")
         self.assertEqual(flash.mode_from_flags(True, False), "raw")

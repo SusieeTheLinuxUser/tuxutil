@@ -13,7 +13,7 @@ from tuxutil import gui
 try:
     import PySide6
     from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtWidgets import QApplication, QLineEdit
+    from PySide6.QtWidgets import QApplication, QLineEdit, QStyle, QStyleOptionGroupBox, QWidget
     HAS_PYSIDE6 = True
 except ImportError:
     HAS_PYSIDE6 = False
@@ -111,6 +111,107 @@ class TestTuxUtilGui(unittest.TestCase):
                 self.win.close()
             pump_events(80)
             self.win = None
+
+    def test_sidebar_and_pages_stay_in_step(self):
+        self.win.nav.setCurrentItem(self.win.nav_items[4])
+        self.assertEqual(self.win.tabs.currentIndex(), 4)
+        self.win.tabs.setCurrentIndex(2)
+        self.assertEqual(self.win.nav.currentItem().text(), "Tweaks")
+
+    def test_group_titles_clear_their_contents(self):
+        """Inputs must not sit on a card's title. This misses the Breeze overlap the owner hit, which Fusion replaces."""
+        for i in range(self.win.tabs.count()):
+            self.win.tabs.setCurrentIndex(i)
+            pump_events(50)
+            for box in self.win.tabs.currentWidget().findChildren(gui.QGroupBox):
+                if not box.isVisible():
+                    continue
+                opt = QStyleOptionGroupBox()
+                opt.initFrom(box)
+                opt.text = box.title()
+                opt.subControls = QStyle.SC_All
+                title = box.style().subControlRect(QStyle.CC_GroupBox, opt, QStyle.SC_GroupBoxLabel, box)
+                self.assertTrue(title.isValid())
+                for child in box.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+                    if child.isVisibleTo(box):
+                        self.assertLess(title.bottom(), child.geometry().top(), box.title())
+
+    def test_log_stays_out_of_the_way_until_a_job_runs(self):
+        self.assertFalse(self.win.log_text.isVisible())
+        self.assertFalse(self.win.progress_bar.isVisible())
+        self.assertFalse(self.win.btn_cancel_job.isVisible())
+        self.win.run_cli_job(["apps", "install", "x"], "Job")
+        self.assertTrue(self.win.log_text.isVisible())
+        self.assertTrue(self.win.progress_bar.isVisible())
+        self.assertTrue(self.win.btn_cancel_job.isVisible())
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertFalse(self.win.progress_bar.isVisible())
+        self.assertFalse(self.win.btn_cancel_job.isVisible())
+        self.assertTrue(self.win.log_text.isVisible())
+
+    def test_optional_choice_sends_nothing_until_picked(self):
+        form = gui.DynamicFormWidget([
+            {"flag": "--compression", "type": "choice", "label": "C", "default": [], "choices": ["gzip", "xz"]},
+            {"flag": "--mode", "type": "choice", "label": "M", "default": "b", "choices": ["a", "b"]},
+        ])
+        self.assertEqual(form.collect_args(), ["--mode", "b"])
+        form.fields["--compression"][1].setCurrentText("xz")
+        self.assertEqual(form.collect_args(), ["--compression", "xz", "--mode", "b"])
+
+    def test_clicking_an_edition_fills_the_edition_option(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--edition", "type": "str", "label": "E"}])
+        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
+        tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
+        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
+
+    def test_download_catalog_is_split_by_kind(self):
+        self.win.tabs.setCurrentIndex(5)
+        tab = self.win.tab_linuxiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        self.assertEqual(tab.download_combo.itemText(0), "Arch Linux")
+        self.assertTrue(tab.download_row.isVisible())
+
+    def test_download_fills_the_source_iso(self):
+        self.win.tabs.setCurrentIndex(5)
+        tab = self.win.tab_linuxiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        tab.download_combo.setCurrentIndex(0)
+        self.assertEqual(tab.btn_download.text(), "Download")
+        tab.on_download_clicked()
+        self.assertTrue(wait_until(lambda: tab.iso_path_edit.text() == "/fake/path/archlinux-live.iso"))
+        self.assertIn("iso download arch", self.win.log_text.toPlainText())
+
+    def test_page_only_entry_opens_the_browser_and_shows_its_note(self):
+        self.win.tabs.setCurrentIndex(4)
+        tab = self.win.tab_winiso
+        self.assertTrue(wait_until(lambda: tab.download_combo.count() == 1))
+        tab.download_combo.setCurrentIndex(0)
+        self.assertEqual(tab.btn_download.text(), "Open Download Page")
+        self.assertEqual(tab.lbl_download_note.text(), "Links expire.")
+        with patch.object(gui.QDesktopServices, "openUrl") as open_url, patch.object(self.win, "run_cli_job") as job:
+            tab.on_download_clicked()
+        self.assertEqual(open_url.call_args[0][0].toString(), "https://example.test/win")
+        job.assert_not_called()
+
+    def test_pasted_link_goes_to_the_cli_and_junk_does_not(self):
+        tab = self.win.tab_linuxiso
+        with patch.object(self.win, "run_cli_job") as job, patch.object(gui.QMessageBox, "warning") as warn:
+            tab.download_combo.setEditText("file:///etc/passwd")
+            tab.on_download_clicked()
+            job.assert_not_called()
+            warn.assert_called_once()
+            tab.download_combo.setEditText("https://example.test/a.iso")
+            tab.on_download_clicked()
+        self.assertEqual(job.call_args[0][0], ["iso", "download", "https://example.test/a.iso"])
+
+    def test_cancel_says_cancelled_not_failed(self):
+        self.win.run_cli_job(["test-long"], "Long job")
+        self.assertTrue(wait_until(lambda: self.win.active_process and self.win.active_process.state() == gui.QProcess.Running))
+        self.win.on_cancel_active_job()
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertEqual(self.win.lbl_job_status.text(), "Long job cancelled")
+        self.assertFalse(self.win.progress_bar.isVisible())
 
     def test_window_properties_and_tabs(self):
         self.assertEqual(self.win.windowTitle(), "TuxUtil")

@@ -738,7 +738,9 @@ def partition_and_format(target, block):
     sector = int(table.get("sectorsize") or 512)
     offset = int(parts[0]["start"]) * sector
     length = int(parts[0]["size"]) * sector
-    system.run(["mkfs.vfat", "-F", "32", "-n", "TUXUTIL", f"--offset={parts[0]['start']}",
+    # -I: the kernel still lists the old partitions (--no-tell-kernel), and mkfs would
+    # refuse a disk with children. We already checked this target ourselves.
+    system.run(["mkfs.vfat", "-I", "-F", "32", "-n", "TUXUTIL", f"--offset={parts[0]['start']}",
                 target, str(length // 1024)])
     return offset, length
 

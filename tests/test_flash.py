@@ -444,7 +444,10 @@ class FatCopyTest(unittest.TestCase):
                 (src / "setup.exe").write_bytes(b"setup")
                 target = work / "disk.img"
                 target.write_bytes(b"\0" * (64 * 1024 * 1024))
-                _offset, length = flash.partition_and_format(str(target), False)
+                with mock.patch.object(system, "run", wraps=system.run) as run:
+                    _offset, length = flash.partition_and_format(str(target), False)
+                # A stick with old partitions has child nodes, which image files never show.
+                self.assertIn("-I", next(c.args[0] for c in run.call_args_list if c.args[0][0] == "mkfs.vfat"))
                 self.assertGreater(length, 32 * 1024 * 1024)
                 # Windows does not mount an EFI System Partition, so Setup would fail.
                 table = json.loads(subprocess.check_output(["sfdisk", "--json", str(target)]))

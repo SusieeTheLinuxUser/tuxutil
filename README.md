@@ -47,7 +47,7 @@ If the stick stays first in the boot order, the PC goes back into Setup after th
 
 ### Download an ISO
 
-`tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download arch` downloads the current Arch Linux ISO with checksum verification. For entries marked `direct: false`, open their `page` in a browser; for Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
+`tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download ID` downloads Arch, Ubuntu, Linux Mint or Garuda and checks the official checksum. Other entries are marked `direct: false` because they have no stable link, so open their `page` in a browser. For Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
 
 ### Custom Linux ISO
 

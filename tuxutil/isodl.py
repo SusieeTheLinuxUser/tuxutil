@@ -22,13 +22,18 @@ CATALOG = [
      "page": "https://archlinux.org/download/", "notes": "Latest x86_64 ISO; checksum verified from the official mirror.",
      "url": "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso",
      "checksum_url": "https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
-     "checksum_name": "archlinux-x86_64.iso"},
+     "pattern": r"archlinux-x86_64\.iso"},
     {"id": "cachyos", "name": "CachyOS", "kind": "linux", "direct": False,
      "page": "https://cachyos.org/download/", "notes": "Choose the live ISO on the official download page."},
-    {"id": "mint", "name": "Linux Mint", "kind": "linux", "direct": False,
-     "page": "https://linuxmint.com/download.php", "notes": "Choose a live edition on the official download page."},
-    {"id": "ubuntu", "name": "Ubuntu", "kind": "linux", "direct": False,
-     "page": "https://ubuntu.com/download/desktop", "notes": "Choose the live desktop ISO on the official download page."},
+    # ponytail: Mint's and Ubuntu's version numbers are hard-coded and go stale. Update them on a new release.
+    {"id": "mint", "name": "Linux Mint 22.3 Cinnamon", "kind": "linux", "direct": True,
+     "page": "https://linuxmint.com/download.php", "notes": "Checksum verified from the official mirror.",
+     "checksum_url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt",
+     "pattern": r"linuxmint-22\.3-cinnamon-64bit\.iso"},
+    {"id": "ubuntu", "name": "Ubuntu 26.04 LTS Desktop", "kind": "linux", "direct": True,
+     "page": "https://ubuntu.com/download/desktop", "notes": "Newest 26.04 point release; checksum verified from Ubuntu's own list.",
+     "checksum_url": "https://releases.ubuntu.com/26.04/SHA256SUMS",
+     "pattern": r"ubuntu-26\.04[.\d]*-desktop-amd64\.iso"},
     {"id": "fedora-kde", "name": "Fedora KDE Plasma Desktop", "kind": "linux", "direct": False,
      "page": "https://fedoraproject.org/kde/", "notes": "Choose the KDE live image on the official download page."},
     {"id": "pop-os", "name": "Pop!_OS", "kind": "linux", "direct": False,
@@ -37,11 +42,14 @@ CATALOG = [
      "page": "https://zorin.com/os/download/", "notes": "Choose a live edition on the official download page."},
     {"id": "manjaro", "name": "Manjaro", "kind": "linux", "direct": False,
      "page": "https://manjaro.org/products/download/x86", "notes": "Choose a live edition on the official download page."},
-    {"id": "garuda", "name": "Garuda Linux", "kind": "linux", "direct": False,
-     "page": "https://garudalinux.org/downloads.html", "notes": "Choose a live edition on the official download page."},
+    {"id": "garuda", "name": "Garuda Linux Dr460nized", "kind": "linux", "direct": True,
+     "page": "https://garudalinux.org/downloads.html", "notes": "Newest build; checksum verified from Garuda's own file.",
+     "url": "https://iso.builds.garudalinux.org/iso/latest/garuda/dr460nized/latest.iso",
+     "checksum_url": "https://iso.builds.garudalinux.org/iso/latest/garuda/dr460nized/latest.iso.sha256",
+     "pattern": r"garuda-[\w.-]+\.iso"},
     {"id": "windows-11", "name": "Windows 11", "kind": "windows", "direct": False,
      "page": "https://www.microsoft.com/software-download/windows11",
-     "notes": "Microsoft's links are temporary; paste a link copied from that page as TARGET."},
+     "notes": "Microsoft's links are temporary. Copy the download link from that page and paste it here."},
 ]
 
 
@@ -59,13 +67,35 @@ def _request(url, headers=None):
     return response
 
 
-def _checksum(url, filename):
-    with _request(url) as response:
+def _latest(entry):
+    """Return (url, file name, SHA-256) of the last file the entry's checksum list names that fits its pattern."""
+    found = None
+    with _request(entry["checksum_url"]) as response:
         for line in response:
             match = re.fullmatch(rb"([0-9a-fA-F]{64})\s+\*?(.+?)\s*", line)
-            if match and match.group(2).decode("utf-8", "replace").rsplit("/", 1)[-1] == filename:
-                return match.group(1).decode("ascii").lower()
-    raise ValueError(f"Could not find SHA-256 for {filename} in catalog checksum file.")
+            if match:
+                name = match.group(2).decode("utf-8", "replace").rsplit("/", 1)[-1]
+                if re.fullmatch(entry["pattern"], name):
+                    found = name, match.group(1).decode("ascii").lower()
+    if not found:
+        raise ValueError(f"{entry['name']}'s checksum list no longer names a matching ISO; open {entry['page']} in a browser.")
+    url = entry.get("url") or entry["checksum_url"].rsplit("/", 1)[0] + "/" + found[0]
+    return url, found[0], found[1]
+
+
+def _open_resuming(url, part):
+    """Open url, resuming part if possible. Returns (response, offset); no response means part is already whole."""
+    offset = part.stat().st_size if part.exists() else 0
+    try:
+        return _request(url, {"Range": f"bytes={offset}-"} if offset else None), offset
+    except urllib.error.HTTPError as exc:
+        if exc.code != 416 or not offset:
+            raise
+        # Nothing left past the end: killed while checking the finished file, or the file on the server changed.
+        if (exc.headers.get("Content-Range") or "").endswith(f"/{offset}"):
+            return None, offset
+        part.unlink()
+        return _request(url), 0
 
 
 def _safe_name(value):
@@ -98,7 +128,7 @@ def _target(value):
         if value == entry["id"]:
             if not entry["direct"]:
                 raise ValueError(f"{entry['name']} has no direct download; open {entry['page']} in a browser.")
-            return entry["url"], entry
+            return None, entry
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         raise ValueError("TARGET must be a direct catalog ID or an http(s) URL.")
@@ -116,19 +146,16 @@ def cmd_download(args):
         expected = args.sha256.lower() if args.sha256 else None
         if expected and not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise ValueError("--sha256 must contain exactly 64 hexadecimal characters.")
-        if entry and not expected:
-            expected = _checksum(entry["checksum_url"], entry["checksum_name"])
-        folder = Path(args.dir).expanduser() if args.dir else (Path(args.output).expanduser().parent if args.output else Path.home() / "Downloads")
-        if args.output:
-            name = _safe_name(Path(args.output).name)
-            folder = Path(args.output).expanduser().parent
-            final = Path(args.output).expanduser().parent / name
-        else:
-            name = _safe_name(urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]) if not entry else _safe_name(entry["url"].rsplit("/", 1)[-1])
-            final = folder / name
+        output = Path(args.output).expanduser() if args.output else None
+        folder = output.parent if output else (Path(args.dir).expanduser() if args.dir else Path.home() / "Downloads")
         if system.DRY_RUN:
-            print(f"Would download {url} to {final.absolute()}")
+            print(f"Would download {args.target} to {(output or folder).absolute()}")
             return 0
+        name = None
+        if entry:
+            url, name, listed = _latest(entry)
+            expected = expected or listed
+        final = output or folder / _safe_name(name or urllib.parse.urlsplit(url).path.rstrip("/") or "download.iso")
         folder.mkdir(parents=True, exist_ok=True)
         part = final.with_name(final.name + ".part")
         if final.exists():
@@ -136,46 +163,51 @@ def cmd_download(args):
                 print(f"@saved {final.absolute()}")
                 return 0
             raise ValueError(f"Refusing to overwrite existing file: {final}")
-        offset = part.stat().st_size if part.exists() else 0
-        headers = {"Range": f"bytes={offset}-"} if offset else {}
-        with _request(url, headers) as response:
-            if offset and response.status != 206:
-                offset = 0
-                mode = "wb"
-            else:
-                mode = "ab" if offset else "wb"
-            if offset and response.status == 206:
-                content_range = response.headers.get("Content-Range", "")
-                match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range)
-                if not match or int(match.group(1)) != offset:
-                    raise ValueError("Server returned an invalid Range response; partial file was kept.")
-                total = int(match.group(3)) if match.group(3) != "*" else None
-            else:
-                length = response.headers.get("Content-Length")
-                total = int(length) if length and length.isdigit() else None
-            if total is not None:
-                free = shutil.disk_usage(folder).free
-                needed = max(0, total - offset)
-                if free < needed:
-                    raise ValueError(f"Not enough free space: need {needed} bytes, have {free}.")
-            response_name = _response_name(response, url)
-            if not args.output and not (entry and offset):
-                final = folder / response_name
-                part = final.with_name(final.name + ".part")
-                if final.exists():
-                    raise ValueError(f"Refusing to overwrite existing file: {final}")
-            received = offset
-            with open(part, mode) as stream:
-                while True:
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    stream.write(block)
-                    stream.flush()
-                    received += len(block)
-                    system.progress(min(99, received * 100 // total) if total else 0, f"Downloading {final.name}")
-        if total is not None and received != total:
-            raise ValueError(f"Download incomplete: expected {total} bytes, received {received}; partial file kept.")
+        # ponytail: a pasted link whose file changed between runs resumes into a mixed file. Only a checksum
+        # catches that, and it's why links without one print the "could not verify" line. Needs an ETag check to fix.
+        response, offset = _open_resuming(url, part)
+        total = offset
+        if response:
+            with response:
+                if offset and response.status != 206:
+                    offset = 0
+                if offset:
+                    content_range = response.headers.get("Content-Range", "")
+                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range)
+                    if not match or int(match.group(1)) != offset:
+                        raise ValueError("Server returned an invalid Range response; partial file was kept.")
+                    total = int(match.group(3)) if match.group(3) != "*" else None
+                else:
+                    length = response.headers.get("Content-Length")
+                    total = int(length) if length and length.isdigit() else None
+                if total is not None:
+                    free = shutil.disk_usage(folder).free
+                    needed = max(0, total - offset)
+                    if free < needed:
+                        raise ValueError(f"Not enough free space: need {needed} bytes, have {free}.")
+                if not output and not entry:
+                    # The server's name beats the link's. Catalog files keep the name their checksum list uses.
+                    final = folder / _response_name(response, url)
+                    part = final.with_name(final.name + ".part")
+                    if final.exists():
+                        raise ValueError(f"Refusing to overwrite existing file: {final}")
+                received = offset
+                shown = None
+                with open(part, "ab" if offset else "wb") as stream:
+                    while True:
+                        block = response.read(1024 * 1024)
+                        if not block:
+                            break
+                        stream.write(block)
+                        stream.flush()
+                        received += len(block)
+                        percent = min(98, received * 100 // total) if total else 0
+                        if percent != shown:
+                            system.progress(percent, f"Downloading {final.name}")
+                            shown = percent
+            if total is not None and received != total:
+                raise ValueError(f"Download incomplete: expected {total} bytes, received {received}; partial file kept.")
+        system.progress(99, "Checking the download")
         actual = _sha256(part)
         if expected and actual != expected:
             part.unlink(missing_ok=True)

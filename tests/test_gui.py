@@ -325,7 +325,6 @@ class TestRenderScreenshots(unittest.TestCase):
         cls.app = get_qapp()
 
         cls.scratch_dirs = [
-            Path("/home/susiee/Projects/tuxutil/.work/gui"),
             Path(__file__).parent.parent / ".work" / "gui",
         ]
         for d in cls.scratch_dirs:

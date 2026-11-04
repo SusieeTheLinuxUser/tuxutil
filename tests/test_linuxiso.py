@@ -4,6 +4,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from tuxutil import linuxiso
 from tuxutil.cli import main
@@ -111,6 +112,21 @@ class FirstBootTest(unittest.TestCase):
             self.assertTrue((root / "etc/systemd/system/multi-user.target.wants/tuxutil-firstboot.service").is_symlink())
             self.assertIn("enable tuxutil-firstboot.service",
                           (root / "etc/systemd/system-preset/00-tuxutil.preset").read_text())
+
+
+class ScratchTest(unittest.TestCase):
+    def test_existing_work_folder_survives_and_scratch_is_removed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            (tmp / "in.iso").write_bytes(b"x")
+            keep = tmp / "out.iso.work" / "keep"
+            keep.parent.mkdir()
+            keep.write_text("mine")
+            with patch("tuxutil.system.DRY_RUN", False), patch("tuxutil.system.require_tools"), \
+                    redirect_stdout(StringIO()):
+                main(["--dry-run", "linuxiso", "build", str(tmp / "in.iso"), "-o", str(tmp / "out.iso")])
+            self.assertEqual(keep.read_text(), "mine")
+            self.assertEqual(sorted(p.name for p in tmp.iterdir()), ["in.iso", "out.iso.work"])
 
 
 class SelinuxTest(unittest.TestCase):

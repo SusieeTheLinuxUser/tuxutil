@@ -156,10 +156,9 @@ def cmd_build(args):
         raise SystemExit(err + f" ({out.parent})")
 
     if os.environ.get("TUXUTIL_LINUXISO_INNER") != "1":
-        # Next to the output, the one place the user has said has room.
-        scratch = Path(str(out) + ".work")
-        scrub(scratch)
-        scratch.mkdir(parents=True)
+        # Next to the output, the one place the user has said has room. A new folder
+        # each time, so nothing already there can be deleted by the cleanup below.
+        scratch = Path(tempfile.mkdtemp(prefix=out.name + ".work-", dir=out.parent))
         env = os.environ.copy()
         env["TUXUTIL_LINUXISO_INNER"] = "1"
         env["TUXUTIL_LINUXISO_SCRATCH"] = str(scratch)

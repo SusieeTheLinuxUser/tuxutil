@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+# ISOs, VM disks, scratch: never committed
+.work/
+*.iso
+*.qcow2
+*.wim
+*.swm
+*.esd

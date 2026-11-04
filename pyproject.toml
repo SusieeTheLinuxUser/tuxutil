@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tuxutil"
+version = "0.1.0"
+description = "Winutil for Linux: apps, tweaks, updates, custom Windows 11 and Linux ISOs, USB flashing."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+
+[project.scripts]
+tuxutil = "tuxutil.cli:main"
+
+[tool.setuptools]
+packages = ["tuxutil"]
+
+[tool.setuptools.package-data]
+tuxutil = ["*.json"]

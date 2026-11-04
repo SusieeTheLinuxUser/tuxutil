@@ -947,24 +947,14 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     _check_disk_space(work_dir, iso_path)
     extract_dir = os.path.join(work_dir, "extract")
 
-    state = {"output": False}
-
-    def _fail_cleanup():
-        shutil.rmtree(work_dir, ignore_errors=True)
-        if state["output"] and os.path.isfile(output_path):
-            try:
-                os.remove(output_path)
-            except OSError:
-                pass
-
     try:
-        _do_build(iso_path, output_path, opts, work_dir, extract_dir, state)
+        _do_build(iso_path, output_path, opts, work_dir, extract_dir)
     except BaseException:
-        _fail_cleanup()
+        shutil.rmtree(work_dir, ignore_errors=True)
         raise
 
 
-def _do_build(iso_path, output_path, opts, work_dir, extract_dir, state):
+def _do_build(iso_path, output_path, opts, work_dir, extract_dir):
     env = _wim_env()
     system.progress(0, "Extracting ISO contents...")
     _run(["7z", "x", iso_path, f"-o{extract_dir}", "-y"])
@@ -1050,11 +1040,8 @@ def _do_build(iso_path, output_path, opts, work_dir, extract_dir, state):
     print(f"Boot records: BIOS {bios}, UEFI {uefi_rel}, label {label}", flush=True)
 
     system.progress(75, "Creating ISO...")
-    if os.path.exists(output_path):
-        os.remove(output_path)
-    state["output"] = True
-    _run(_xorriso_argv(extract_dir, output_path, label, uefi_rel))
-    state["output"] = False
+    with system.atomic_output(output_path) as partial:
+        _run(_xorriso_argv(extract_dir, partial, label, uefi_rel))
 
     system.progress(95, "Cleaning up...")
     shutil.rmtree(work_dir, ignore_errors=True)

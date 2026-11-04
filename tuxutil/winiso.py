@@ -1075,6 +1075,8 @@ def _flat(values):
 
 
 def options_from_args(args) -> BuildOptions:
+    # Always cleared, so child tools never inherit it.
+    env_password = os.environ.pop("TUXUTIL_PASSWORD", "")
     return BuildOptions(
         edition=args.edition or "",
         remove_apps=_flat(args.remove_apps),
@@ -1084,7 +1086,7 @@ def options_from_args(args) -> BuildOptions:
         apply_tweaks=not args.no_tweaks,
         bypass_requirements=not args.no_bypass,
         local_username=args.username or "",
-        local_password=args.password or os.environ.pop("TUXUTIL_PASSWORD", ""),
+        local_password=args.password or env_password,
         locale=args.locale or "",
         keyboard=args.keyboard or "",
         timezone=args.timezone or "",

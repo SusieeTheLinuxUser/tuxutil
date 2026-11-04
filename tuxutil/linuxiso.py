@@ -150,7 +150,7 @@ def cmd_build(args):
         raise SystemExit(f"Overlay directory not found: {args.overlay}")
     if args.first_boot and not Path(args.first_boot).is_file():
         raise SystemExit(f"First-boot script not found: {args.first_boot}")
-    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap"])
+    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap", "newgidmap"])
     err = space_error(shutil.disk_usage(out.parent).free, bytes_needed(iso.stat().st_size))
     if err:
         raise SystemExit(err + f" ({out.parent})")

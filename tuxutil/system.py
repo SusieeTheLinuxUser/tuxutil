@@ -64,6 +64,7 @@ TOOL_PACKAGES = {
     "lsblk": {"default": "util-linux"},
     "unshare": {"default": "util-linux"},
     "newuidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},
+    "newgidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},
     "flatpak": {},
     "qemu-system-x86_64": {"arch": "qemu-full", "debian": "qemu-system-x86", "fedora": "qemu-system-x86", "suse": "qemu-x86"},
     # 7z reads UDF. xorriso only sees the ISO9660 bridge on Microsoft ISOs.

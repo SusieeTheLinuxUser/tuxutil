@@ -1,5 +1,6 @@
 """Install and remove apps from the catalog (apps.json) via the distro package manager or flatpak."""
 import json
+import shutil
 from pathlib import Path
 
 from . import system
@@ -18,22 +19,26 @@ def load():
     return json.loads(CATALOG.read_text())
 
 
-def _names(cmd):
+def _names(cmd, strict=False):
     if not cmd:
         return set()
     result = system.query(cmd)
     if result.returncode != 0:
+        if strict:
+            raise SystemExit(f"Could not read the installed apps with {cmd[0]}, so nothing was removed.")
         return set()
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
-def installed_names(family):
-    native = _names(NATIVE_QUERY.get(family))
+def installed_names(family, strict=False):
+    """strict stops on a failed query. Removal must not mistake it for "not installed"."""
+    native = _names(NATIVE_QUERY.get(family), strict)
     if family == "debian":
         # dpkg also lists removed packages that left their config files behind.
         native = {line.split()[1] for line in native if line.startswith("installed ")}
     flatpaks = set()
-    for line in _names(["flatpak", "list", "--app", "--columns=application"]):
+    # No flatpak at all is a normal answer, not a failed query.
+    for line in _names(["flatpak", "list", "--app", "--columns=application"], strict and shutil.which("flatpak")):
         # A header, if a future flatpak prints one, has no dot. App ids do.
         if "." in line:
             flatpaks.add(line.split()[0])
@@ -200,7 +205,7 @@ def cmd_list(args):
 def change(args, verb):
     distro = system.detect()
     apps = select(load(), args.ids)
-    installed = installed_names(distro.family) if verb == "remove" else None
+    installed = installed_names(distro.family, strict=True) if verb == "remove" else None
     native, flatpaks, unavailable = plan(apps, distro, installed)
     if unavailable:
         raise SystemExit(f"Not available on {distro.family}: {', '.join(unavailable)}")

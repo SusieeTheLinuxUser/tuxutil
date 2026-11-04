@@ -546,6 +546,10 @@ class TestOptionParsing(unittest.TestCase):
         with patch.dict(os.environ, {"TUXUTIL_PASSWORD": "from-env"}):
             self.assertEqual(winiso.options_from_args(args).local_password, "from-env")
             self.assertNotIn("TUXUTIL_PASSWORD", os.environ)  # Child tools must not inherit it.
+        args.password = "from-flag"
+        with patch.dict(os.environ, {"TUXUTIL_PASSWORD": "from-env"}):
+            self.assertEqual(winiso.options_from_args(args).local_password, "from-flag")
+            self.assertNotIn("TUXUTIL_PASSWORD", os.environ)
         self.assertFalse(opts.bypass_requirements)
         self.assertFalse(opts.apply_tweaks)
         self.assertFalse(opts.remove_onedrive)

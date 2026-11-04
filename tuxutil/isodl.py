@@ -53,21 +53,30 @@ CATALOG = [
 ]
 
 
-def _request(url, headers=None):
+def _check_url(url):
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         raise ValueError("Only http and https URLs are allowed.")
-    if "@" in urllib.parse.urlsplit(url).netloc:
+    if "@" in parsed.netloc:
         # urllib would look up "user:password@host" as a host name, sending the password to DNS.
         raise ValueError("Links with a user name or password are not supported.")
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_CheckedRedirects)
+
+
+def _request(url, headers=None):
+    _check_url(url)
     request_headers = {"User-Agent": USER_AGENT}
     if headers:
         request_headers.update(headers)
-    response = urllib.request.urlopen(urllib.request.Request(url, headers=request_headers), timeout=TIMEOUT)
-    if urllib.parse.urlsplit(response.geturl()).scheme.lower() not in ("http", "https"):
-        response.close()
-        raise ValueError("Redirected download URL must use http or https.")
-    return response
+    return _opener.open(urllib.request.Request(url, headers=request_headers), timeout=TIMEOUT)
 
 
 def _latest(entry):

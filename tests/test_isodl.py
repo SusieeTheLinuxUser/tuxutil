@@ -5,6 +5,7 @@ import http.server
 import io
 import json
 import os
+import socket
 import tempfile
 import threading
 import unittest
@@ -24,6 +25,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        redirects = {"/to-password": "http://alice:hunter2@example.test:80/a.iso", "/to-ftp": "ftp://example.test/a.iso", "/moved": "/moved.iso"}
+        if self.path in redirects:
+            self.send_response(302)
+            self.send_header("Location", redirects[self.path])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path == "/SUMS":
             self.send_response(200)
             self.send_header("Content-Length", str(len(self.sums)))
@@ -169,6 +177,23 @@ class IsoDownloadTests(unittest.TestCase):
             self.assertEqual(self.run_download("http://alice:hunter2@example.test/a.iso", Path(tmp)), 1)
         lookup.assert_not_called()
         self.assertNotIn("hunter2", err.getvalue())
+
+    def test_redirects_are_checked_before_they_are_followed(self):
+        real_lookup = socket.getaddrinfo
+        def lookup(host, *args, **kwargs):
+            self.assertEqual(host, "127.0.0.1")
+            return real_lookup(host, *args, **kwargs)
+        for path, message in (("/to-password", "user name or password"), ("/to-ftp", "http and https")):
+            err = io.StringIO()
+            with self.subTest(path), tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(err), patch("socket.getaddrinfo", lookup):
+                self.assertEqual(self.run_download(self.base + path, Path(tmp)), 1)
+                self.assertIn(message, err.getvalue())
+                self.assertNotIn("hunter2", err.getvalue())
+
+    def test_a_plain_redirect_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_download(self.base + "/moved", Path(tmp)), 0)
+            self.assertEqual((Path(tmp) / "moved.iso").read_bytes(), DATA)
 
     def test_no_target_at_all_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ"):

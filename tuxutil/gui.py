@@ -1545,6 +1545,7 @@ if HAS_PYSIDE6:
 
             self.active_job_is_flash = is_flash
             self.last_saved_path = ""
+            self.job_cancelled = False
             base_cmd = get_cli_base_cmd()
             args, password = split_password(args)
             full_cmd = base_cmd + args
@@ -1609,7 +1610,9 @@ if HAS_PYSIDE6:
                 self.progress_bar.setVisible(False)
                 self.set_actions_enabled(True)
 
-                if exit_code == 0:
+                if self.job_cancelled:
+                    self._set_job_status(f"{job_title} cancelled", "warn")
+                elif exit_code == 0:
                     self._set_job_status(f"{job_title} completed successfully", "ok")
                     if on_finished:
                         on_finished()
@@ -1637,6 +1640,7 @@ if HAS_PYSIDE6:
                 return
 
             self.log_text.appendPlainText("\nTerminating job at user request...")
+            self.job_cancelled = True
             self._set_job_status("Terminating job...", "warn")
             proc = self.active_process
             proc.terminate()

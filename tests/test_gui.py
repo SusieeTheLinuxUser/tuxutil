@@ -205,6 +205,14 @@ class TestTuxUtilGui(unittest.TestCase):
             tab.on_download_clicked()
         self.assertEqual(job.call_args[0][0], ["iso", "download", "https://example.test/a.iso"])
 
+    def test_cancel_says_cancelled_not_failed(self):
+        self.win.run_cli_job(["test-long"], "Long job")
+        self.assertTrue(wait_until(lambda: self.win.active_process and self.win.active_process.state() == gui.QProcess.Running))
+        self.win.on_cancel_active_job()
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertEqual(self.win.lbl_job_status.text(), "Long job cancelled")
+        self.assertFalse(self.win.progress_bar.isVisible())
+
     def test_window_properties_and_tabs(self):
         self.assertEqual(self.win.windowTitle(), "TuxUtil")
         self.assertGreaterEqual(self.win.minimumWidth(), 900)

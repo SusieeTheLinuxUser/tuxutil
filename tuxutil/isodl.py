@@ -1,5 +1,6 @@
 """Download supported live Linux ISOs and open-source Windows download pages."""
 import argparse
+import fcntl
 import hashlib
 import http.client
 import json
@@ -95,11 +96,9 @@ def _latest(entry):
     return url, found[0], found[1]
 
 
-def _open_resuming(url, part):
-    """Open url, resuming part if possible. Returns (response, offset); no response means part is already whole."""
-    if part.is_symlink():
-        raise ValueError(f"Refusing to write through a symbolic link: {part}")
-    offset = part.stat().st_size if part.exists() else 0
+def _open_resuming(url, lock):
+    """Open url, resuming the locked .part if possible. Returns (response, offset); no response means it's already whole."""
+    offset = os.fstat(lock).st_size
     try:
         return _request(url, {"Range": f"bytes={offset}-"} if offset else None), offset
     except urllib.error.HTTPError as exc:
@@ -108,7 +107,7 @@ def _open_resuming(url, part):
         # Nothing left past the end: killed while checking the finished file, or the file on the server changed.
         if (exc.headers.get("Content-Range") or "").endswith(f"/{offset}"):
             return None, offset
-        part.unlink()
+        os.ftruncate(lock, 0)
         return _request(url), 0
 
 
@@ -154,7 +153,22 @@ def cmd_list(args):
     return 0
 
 
+def _lock_part(part):
+    """Hold the .part file for this run, so two downloads can't write into it at once."""
+    if part.is_symlink():
+        raise ValueError(f"Refusing to write through a symbolic link: {part}")
+    lock = os.open(part, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o666)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock)
+        raise ValueError(f"Another download is already writing {part}.") from None
+    return lock
+
+
 def cmd_download(args):
+    lock = None
+    part = None
     try:
         # The GUI sends pasted links here, because a signed link in argv is readable by other local users.
         target = args.target or os.environ.pop("TUXUTIL_DOWNLOAD_URL", "")
@@ -182,8 +196,9 @@ def cmd_download(args):
                 return 0
             raise ValueError(f"Refusing to overwrite existing file: {final}")
         # ponytail: a pasted link whose file changed, or another link with the same name, resumes into a mixed file.
-        # Only a checksum catches that, which is why links without one print "could not verify". Needs an ETag check.
-        response, offset = _open_resuming(url, part)
+        # Only a checksum catches that, so a resume without one warns below. Needs an ETag check.
+        lock = _lock_part(part)
+        response, offset = _open_resuming(url, lock)
         total = offset
         if response:
             with response:
@@ -235,6 +250,11 @@ def cmd_download(args):
         if not expected:
             print(f"SHA-256 {actual}")
             print("Could not verify: no SHA-256 was provided or available.")
+            if offset:
+                print("Warning: this download was resumed. If the file changed on the server, the result is corrupt.")
+        # ponytail: a file created between this check and the rename is still replaced; os.link fails on FAT and exFAT.
+        if final.exists():
+            raise ValueError(f"Refusing to overwrite existing file: {final}; partial file kept.")
         os.replace(part, final)
         system.progress(100, "Download complete")
         print(f"@saved {final.absolute()}")
@@ -246,6 +266,11 @@ def cmd_download(args):
     except (ValueError, OSError, http.client.HTTPException, urllib.error.URLError) as exc:
         print(f"Download failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if lock is not None:
+            if not os.fstat(lock).st_size:
+                part.unlink(missing_ok=True)  # Don't leave an empty file behind when the download never started.
+            os.close(lock)
 
 
 def register(subparsers):

@@ -730,7 +730,8 @@ if HAS_PYSIDE6:
             if self.active_process:
                 text = "A job is still running. Closing will stop it."
                 if self.active_job_is_flash:
-                    text += "\n\nStopping a USB flash may leave the drive corrupted or unbootable."
+                    text = ("A USB flash is still running. It runs as root and keeps writing after this window closes, "
+                            "with no way to see when it ends.\n\nDon't remove the drive until its activity stops.")
                 answer = QMessageBox.warning(self, "Job Running", text + "\n\nClose anyway?",
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if answer != QMessageBox.Yes:
@@ -1285,7 +1286,11 @@ if HAS_PYSIDE6:
             self.lbl_job_status.setStyleSheet("font-weight: bold; color: #0288d1;")
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat(f"0% - Starting {job_title}...")
-            self.btn_cancel_job.setEnabled(True)
+            # ponytail: terminating the CLI can't reach its root writer, so Cancel would report a stop
+            # while the write goes on. Needs a cancel channel through pkexec/sudo, tested as root.
+            self.btn_cancel_job.setEnabled(not is_flash)
+            if is_flash:
+                self.log_text.appendPlainText("Cancel is off during a USB flash: the writer runs as root and can't be stopped from here.")
             self.set_actions_enabled(False)
 
             proc = QProcess(self)
@@ -1357,18 +1362,6 @@ if HAS_PYSIDE6:
         def on_cancel_active_job(self):
             if not self.active_process:
                 return
-
-            if self.active_job_is_flash:
-                resp = QMessageBox.warning(
-                    self,
-                    "Cancel USB Flash",
-                    "Cancelling a USB flash in progress may leave the drive corrupted, unpartitioned, or unbootable.\n\n"
-                    "Are you sure you want to abort the flash operation?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
-                )
-                if resp != QMessageBox.Yes:
-                    return
 
             self.log_text.appendPlainText("\n⚠️ Terminating job at user request...")
             self.lbl_job_status.setText("Terminating job...")

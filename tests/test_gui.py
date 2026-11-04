@@ -436,6 +436,16 @@ class ProcessFailureTest(unittest.TestCase):
         self.assertFalse(self.win.btn_cancel_job.isEnabled())
         self.assertIn("failed", self.win.lbl_job_status.text())
 
+    def test_flash_cannot_be_cancelled(self):
+        with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}):
+            self.win.run_cli_job(["pass"], "Flash", is_flash=True)
+            self.assertFalse(self.win.btn_cancel_job.isEnabled())
+            self.assertIn("Cancel is off", self.win.log_text.toPlainText())
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+            self.win.run_cli_job(["pass"], "Other")
+            self.assertTrue(self.win.btn_cancel_job.isEnabled())
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+
     def test_cancel_timer_does_not_kill_the_next_job(self):
         with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}):
             self.win.run_cli_job(["import time; time.sleep(30)"], "First")

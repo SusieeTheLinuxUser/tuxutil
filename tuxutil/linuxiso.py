@@ -790,7 +790,7 @@ def inner_build(args, scratch):
             _run_packages(root, pkg_family, args.add_pkg or [], args.remove_pkg or [], mounts)
 
         _umount_children(root, mounts)
-        if args.hostname and info["squashfs"].startswith("/casper/"):
+        if args.hostname and info["squashfs"].startswith("/casper"):
             # casper writes its own hostname at boot unless this is set.
             args.kernel_arg = [*(args.kernel_arg or []), f"hostname={args.hostname}"]
         if _selinux_enforcing(root):
@@ -834,16 +834,8 @@ def _materialize(iso, info, scratch):
         pseudo, comp, block = _unpack_squash(image, root)
         inner = root / "LiveOS" / "rootfs.img"
         if inner.is_file() and not (root / "etc" / "os-release").exists() and not (root / "usr" / "lib" / "os-release").exists():
-            inner_kind = sniff_image(inner.read_bytes()[:4096])
-            if inner_kind == "ext4":
-                raise SystemExit("LiveOS/rootfs.img is ext4. fuse2fs is not installed, so it cannot be "
-                                 "edited without root. Refusing to build.")
-            if inner_kind == "erofs":
-                root2 = scratch / "root-inner"
-                _unpack_erofs(inner, root2)
-                return root2, {"dir": root2, "kind": "erofs-in-squash", "outer_root": root,
-                               "outer_image": image, "inner_image": inner, "iso_path": iso_path,
-                               "pseudo": pseudo, "compression": comp, "block": block}
+            # ponytail: no ISO we could test nests its root like this, so refuse rather than guess.
+            raise SystemExit("The root is nested in LiveOS/rootfs.img, which isn't supported. Refusing to build.")
         return root, {"dir": root, "kind": "squashfs", "iso_path": iso_path, "pseudo": pseudo,
                       "compression": comp, "block": block, "image": image}
     if kind == "erofs":
@@ -937,23 +929,6 @@ def _repack(repack, scratch, compression):
             alg = "lzma"
         dest = scratch / "new-root.img"
         run(mkfs_erofs_cmd(repack["dir"], dest, alg))
-        return dest
-    if kind == "erofs-in-squash":
-        system.require_tools(["mkfs.erofs"])
-        alg = EROFS_COMP.get(compression) if compression else "lzma"
-        if compression == "lzo":
-            raise SystemExit("lzo compression is not available for erofs images. Choose gzip, xz, or zstd.")
-        new_inner = scratch / "rootfs.img"
-        run(mkfs_erofs_cmd(repack["dir"], new_inner, alg or "lzma"))
-        live = repack["outer_root"] / "LiveOS"
-        live.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(new_inner), str(live / "rootfs.img"))
-        dest = scratch / "new-squash.img"
-        comp = compression or repack["compression"] or "xz"
-        pseudo = scratch / "devices.pf"
-        if repack.get("pseudo"):
-            pseudo.write_text(repack["pseudo"])
-        run(mksquashfs_cmd(repack["outer_root"], dest, comp, pseudo if repack.get("pseudo") else None, repack.get("block")))
         return dest
     dest = scratch / "new.squashfs"
     comp = compression or repack["compression"] or "xz"

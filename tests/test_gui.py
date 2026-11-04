@@ -411,5 +411,15 @@ class TestRenderScreenshots(unittest.TestCase):
         pump_events(80)
 
 
+class DryRunTest(unittest.TestCase):
+    def test_gui_passes_dry_run_to_the_cli(self):
+        with patch.dict(os.environ) as env, patch("tuxutil.system.DRY_RUN", True):
+            env.pop("TUXUTIL_CLI", None)
+            self.assertIn("--dry-run", gui.get_cli_base_cmd())
+        with patch.dict(os.environ) as env, patch("tuxutil.system.DRY_RUN", False):
+            env.pop("TUXUTIL_CLI", None)
+            self.assertNotIn("--dry-run", gui.get_cli_base_cmd())
+
+
 if __name__ == "__main__":
     unittest.main()

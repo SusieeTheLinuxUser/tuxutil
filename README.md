@@ -62,7 +62,7 @@ tuxutil flash list --json
 tuxutil flash write custom.iso /dev/sdX --confirm /dev/sdX
 ```
 
-This needs root and asks for it. It refuses any drive that holds your running system, a mounted filesystem or swap. **Everything on the target drive is erased.** Windows ISOs get a FAT32 stick with a split install image. Other ISOs are written as they are. Writes are verified unless you pass `--no-verify`.
+This needs root and asks for it. It refuses any drive that holds your running system or swap, or has a filesystem mounted outside `/media`, `/run/media` and `/mnt`. Filesystems mounted under those folders, such as a USB stick your desktop opened, **are unmounted and erased**, so check the device name. **Everything on the target drive is erased.** Windows ISOs get a FAT32 stick with a split install image. Other ISOs are written as they are. Writes are verified unless you pass `--no-verify`.
 
 ## What has been tested
 

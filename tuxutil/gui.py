@@ -49,7 +49,8 @@ def get_cli_base_cmd():
     if override:
         return shlex.split(override)
     from . import system
-    return system.self_cmd()
+    # GUI actions run as new CLI processes, so `tuxutil --dry-run gui` must pass the flag on.
+    return [*system.self_cmd(), *(["--dry-run"] if system.DRY_RUN else [])]
 
 
 def mask_command_for_log(cmd):

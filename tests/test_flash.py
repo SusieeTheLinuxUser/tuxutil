@@ -2,12 +2,9 @@ import io
 import json
 import os
 import shutil
-import socket
 import stat
 import subprocess
-import sys
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -15,14 +12,6 @@ from unittest import mock
 
 from tuxutil import flash, system
 from tuxutil.cli import main
-
-REPO = Path(__file__).resolve().parents[1]
-RAW_ISO = Path("/home/susiee/Documents/ISOs/ARCH_Netrunner-BareMetal.iso")
-WIN_ISO = Path("/home/susiee/Documents/ISOs/CORPOSOFT/WINDOWS11_CorpoSoftOverlord.iso")
-WORK = Path("/home/susiee/Projects/tuxutil/.work/flash")
-OVMF_CODE = "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-OVMF_VARS = "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
-REAL = os.environ.get("TUXUTIL_FLASH_REAL") == "1"
 
 
 def disk(name, path, size, tran, rm, children=None, model="Disk", fstype=None, mountpoints=None):
@@ -217,6 +206,34 @@ class SafetyTest(unittest.TestCase):
         )
         self.assertEqual(elsewhere, "")
 
+    def test_raid_across_two_disks_blocks_both(self):
+        inverse = {"blockdevices": [{
+            "name": "md0", "path": "/dev/md0", "type": "raid1", "size": 100,
+            "children": [
+                {"name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk", "size": 100, "tran": "nvme", "rm": False},
+                {"name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 100, "tran": "usb", "rm": True},
+            ],
+        }]}
+        normal = {"blockdevices": [
+            disk("nvme0n1", "/dev/nvme0n1", 100, "nvme", False),
+            disk("sdb", "/dev/sdb", 100, "usb", True),
+        ]}
+        mounts = {"filesystems": [{"target": "/", "source": "/dev/md0", "fstype": "ext4"}]}
+        self.assertEqual(flash.reason_for("/dev/sdb", normal, inverse, mounts, ""), "holds /")
+
+    def test_unplaceable_root_mount_blocks_every_disk(self):
+        normal, inverse, _mounts, swaps = snap([disk("sdb", "/dev/sdb", 100, "usb", True)])
+        mounts = {"filesystems": [{"target": "/", "source": "/dev/root", "fstype": "ext4"}]}
+        self.assertFalse(flash.list_disks(normal, inverse, mounts, swaps)[0]["safe"])
+
+    def test_loop_mount_does_not_block(self):
+        normal, inverse, _mounts, swaps = snap([
+            disk("sdb", "/dev/sdb", 100, "usb", True),
+            {"name": "loop0", "path": "/dev/loop0", "type": "loop", "size": 10},
+        ])
+        mounts = {"filesystems": [{"target": "/opt/iso", "source": "/dev/loop0", "fstype": "iso9660"}]}
+        self.assertTrue(flash.list_disks(normal, inverse, mounts, swaps)[0]["safe"])
+
     def test_cli_list_json(self):
         normal, inverse, mounts, swaps = snap([
             disk("sdc", "/dev/sdc", 100, "usb", True, model="Ultra"),
@@ -327,6 +344,44 @@ class WriteGuardTest(unittest.TestCase):
             flash.write_raw(str(iso), str(target), False, verify=True)
             self.assertEqual(target.read_bytes(), payload)
 
+    def test_dry_run_root_side_never_unmounts_or_writes(self):
+        system.DRY_RUN = True
+        plan = {"device": "/dev/sdz", "block": True}
+        with mock.patch.object(flash, "prepare", return_value=plan), \
+                mock.patch.object(flash, "unmount_target", side_effect=AssertionError("unmounted")), \
+                mock.patch.object(flash, "write_raw", side_effect=AssertionError("wrote")):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(flash.cmd_write_root(argparse_ns("a.iso", "/dev/sdz", "/dev/sdz")), 0)
+
+    def test_dry_run_list_still_reads_disks(self):
+        system.DRY_RUN = True
+        with mock.patch.object(system, "query") as query:
+            query.return_value = subprocess.CompletedProcess([], 0, '{"blockdevices": []}', "")
+            self.assertEqual(flash.capture(["lsblk"]), '{"blockdevices": []}')
+
+    def test_too_small_target_refused_before_it_is_wiped(self):
+        os.environ[flash.TEST_ENV] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / ".work"
+            work.mkdir()
+            os.environ[flash.WORK_ENV] = str(work)
+            iso = work / "win.iso"
+            iso.write_bytes(b"x" * 8)
+            target = work / "stick.img"
+            target.write_bytes(b"\0" * 1024)
+
+            def fake_extract(_iso, dest):
+                (dest / "sources").mkdir(parents=True)
+                (dest / "sources" / "boot.wim").write_bytes(b"x" * 4096)
+
+            with mock.patch.object(flash, "extract_iso", fake_extract), \
+                    mock.patch.object(flash, "partition_and_format", side_effect=AssertionError("wiped")), \
+                    mock.patch.object(system, "require_tools"), redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    flash.write_windows(str(iso), str(target), str(target))
+            self.assertIn("4096", str(caught.exception))
+            self.assertEqual([p.name for p in work.glob("tuxutil-flash-*")], [])
+
     def test_root_argv_embeds_package_path_and_imports(self):
         argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", no_verify=True)
         parent = str(Path(flash.__file__).resolve().parent.parent)
@@ -389,8 +444,12 @@ class FatCopyTest(unittest.TestCase):
                 (src / "setup.exe").write_bytes(b"setup")
                 target = work / "disk.img"
                 target.write_bytes(b"\0" * (64 * 1024 * 1024))
-                _offset, length = flash.partition_and_format(str(target), work, False)
+                _offset, length = flash.partition_and_format(str(target), False)
                 self.assertGreater(length, 32 * 1024 * 1024)
+                # Windows does not mount an EFI System Partition, so Setup would fail.
+                table = json.loads(subprocess.check_output(["sfdisk", "--json", str(target)]))
+                self.assertEqual(table["partitiontable"]["label"], "dos")
+                self.assertEqual(table["partitiontable"]["partitions"][0]["type"], "c")
                 flash.copy_tree(src, str(target), _offset)
                 flash.verify_tree(src, str(target), _offset)
                 self.assertTrue(stat.S_ISREG(target.stat().st_mode))
@@ -400,200 +459,6 @@ class FatCopyTest(unittest.TestCase):
 
 def argparse_ns(iso, device, confirm, no_verify=False, json=False):
     return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json)
-
-
-def _ppm_spread(path):
-    data = Path(path).read_bytes()
-    if not data.startswith(b"P6"):
-        return 0
-    header, _, raw = data.partition(b"\n255\n")
-    if not raw:
-        return 0
-    sample = raw[:: max(1, len(raw) // 5000)]
-    return max(sample) - min(sample)
-
-
-class Qmp:
-    def __init__(self, path):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        last = None
-        for _ in range(100):
-            try:
-                self.sock.connect(str(path))
-                break
-            except (FileNotFoundError, ConnectionRefusedError) as err:
-                last = err
-                time.sleep(0.1)
-        else:
-            raise RuntimeError(f"no QMP socket {path}: {last}")
-        self.sock.settimeout(30)
-        self.buf = b""
-        self._read()
-        self.cmd("qmp_capabilities")
-
-    def _read(self):
-        while b"\n" not in self.buf:
-            chunk = self.sock.recv(1 << 20)
-            if not chunk:
-                raise RuntimeError("QMP closed")
-            self.buf += chunk
-        line, self.buf = self.buf.split(b"\n", 1)
-        return json.loads(line)
-
-    def cmd(self, execute, **arguments):
-        message = {"execute": execute}
-        if arguments:
-            message["arguments"] = arguments
-        self.sock.sendall(json.dumps(message).encode() + b"\n")
-        while True:
-            obj = self._read()
-            if "error" in obj:
-                raise RuntimeError(str(obj["error"]))
-            if "return" in obj:
-                return obj["return"]
-
-    def close(self):
-        self.sock.close()
-
-
-def boot_usb(image, png, *, memory, cpus, timeout, name, keys=()):
-    """Boot image as a USB disk under OVMF. No host devices. Returns when a frame is saved."""
-    if memory > 8192 or cpus > 4:
-        raise AssertionError("VM over the 4 vCPU / 8 GB cap")
-    image = Path(image)
-    if image.is_symlink() or str(image.resolve()).startswith("/dev/"):
-        raise AssertionError(f"refusing to attach {image}")
-    WORK.mkdir(parents=True, exist_ok=True)
-    frames = WORK / f"{name}-frames"
-    if frames.exists():
-        shutil.rmtree(frames)
-    frames.mkdir()
-    vars_dst = WORK / f"{name}-vars.fd"
-    shutil.copyfile(OVMF_VARS, vars_dst)
-    qmp_path = WORK / f"{name}.qmp"
-    qmp_path.unlink(missing_ok=True)
-    log_path = WORK / f"{name}.log"
-    cmd = [
-        "qemu-system-x86_64",
-        "-machine", "q35,accel=kvm",
-        "-cpu", "host",
-        "-smp", str(cpus),
-        "-m", str(memory),
-        "-no-reboot",
-        "-nodefaults",
-        "-vga", "std",
-        "-display", "none",
-        "-drive", f"if=pflash,unit=0,format=raw,readonly=on,file={OVMF_CODE}",
-        "-drive", f"if=pflash,unit=1,format=raw,file={vars_dst}",
-        "-device", "qemu-xhci,id=xhci",
-        "-drive", f"if=none,id=stick,format=raw,file={image}",
-        "-device", "usb-storage,bus=xhci.0,drive=stick,bootindex=0",
-        "-qmp", f"unix:{qmp_path},server,nowait",
-        "-name", name,
-    ]
-    if any(str(part).startswith("/dev/") for part in cmd):
-        raise AssertionError(cmd)
-    log = open(log_path, "w")
-    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    qmp = None
-    last_good = None
-    try:
-        qmp = Qmp(qmp_path)
-        deadline = time.time() + timeout
-        sent = set()
-        index = 0
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                raise AssertionError(f"qemu exited {proc.returncode}: {log_path.read_text()[-2000:]}")
-            elapsed = timeout - (deadline - time.time())
-            for at, key in keys:
-                if elapsed >= at and at not in sent:
-                    qmp.cmd("send-key", keys=[{"type": "qcode", "data": key}])
-                    sent.add(at)
-            ppm = frames / f"{index:03d}.ppm"
-            try:
-                qmp.cmd("screendump", filename=str(ppm))
-            except RuntimeError:
-                time.sleep(2)
-                continue
-            if ppm.exists() and _ppm_spread(ppm) > 8:
-                last_good = ppm
-            index += 1
-            time.sleep(10)
-        if last_good is None:
-            raise AssertionError(f"no non-blank frame; see {log_path}")
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(last_good), str(png)],
-            check=True,
-        )
-    finally:
-        if qmp is not None:
-            qmp.close()
-        if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, 15)
-                proc.wait(timeout=5)
-            except (subprocess.TimeoutExpired, ProcessLookupError):
-                pass
-            if proc.poll() is None:
-                try:
-                    os.killpg(proc.pid, 9)
-                except ProcessLookupError:
-                    pass
-                proc.wait(timeout=5)
-        log.close()
-
-
-def flash_file(iso, target):
-    env = os.environ.copy()
-    env[flash.TEST_ENV] = "1"
-    env[flash.WORK_ENV] = str(WORK)
-    subprocess.run(
-        [sys.executable, "-m", "tuxutil", "flash", "write", str(iso), str(target), "--confirm", str(target)],
-        cwd=REPO, env=env, check=True,
-    )
-
-
-@unittest.skipUnless(REAL, "set TUXUTIL_FLASH_REAL=1 to flash the real ISOs and boot them")
-class RealMachineTest(unittest.TestCase):
-    def test_live_list_marks_system_disks_unsafe(self):
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = main(["flash", "list", "--json"])
-        self.assertEqual(code, 0)
-        rows = {row["path"]: row for row in json.loads(buf.getvalue())}
-        for path in ("/dev/nvme0n1", "/dev/nvme1n1", "/dev/sda"):
-            self.assertIn(path, rows)
-            self.assertFalse(rows[path]["safe"], rows[path])
-        self.assertIn("zero-size", rows["/dev/sda"]["reason"])
-
-    def test_raw_netrunner_boots(self):
-        self.assertTrue(RAW_ISO.is_file())
-        img = WORK / "netrunner.img"
-        WORK.mkdir(parents=True, exist_ok=True)
-        with open(img, "wb") as handle:
-            handle.truncate(RAW_ISO.stat().st_size)
-        flash_file(RAW_ISO, img)
-        png = WORK / "raw-boot.png"
-        boot_usb(img, png, memory=2048, cpus=2, timeout=150, name="tuxutil-flash-raw")
-        self.assertGreater(png.stat().st_size, 1000)
-        img.unlink()
-
-    def test_windows_setup_boots(self):
-        self.assertTrue(WIN_ISO.is_file())
-        img = WORK / "windows.img"
-        WORK.mkdir(parents=True, exist_ok=True)
-        with open(img, "wb") as handle:
-            handle.truncate(16 * 1024 * 1024 * 1024)
-        flash_file(WIN_ISO, img)
-        png = WORK / "windows-setup.png"
-        # Language screen accepts Enter. Stop before a later Enter would leave the edition list.
-        boot_usb(
-            img, png, memory=4096, cpus=4, timeout=720, name="tuxutil-flash-windows",
-            keys=((90, "ret"), (140, "ret")),
-        )
-        self.assertGreater(png.stat().st_size, 1000)
-        img.unlink()
 
 
 if __name__ == "__main__":

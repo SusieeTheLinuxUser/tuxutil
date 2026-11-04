@@ -6,13 +6,18 @@ The root re-exec (`flash _write`) repeats those checks, so they cannot be
 skipped by calling the writer directly.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
+import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import system
@@ -25,7 +30,6 @@ PROTECTED = ("/", "/boot", "/home", "/usr", "/var")
 DATA_MOUNTS = ("/media", "/run/media", "/mnt")
 INSTALL_NAMES = {"install.wim", "install.esd", "install.swm"}
 LSBLK_COLS = "NAME,PATH,PKNAME,TYPE,SIZE,TRAN,RM,MODEL,FSTYPE,MOUNTPOINTS"
-DEFAULT_WORK = Path("/home/susiee/Projects/tuxutil/.work/flash")
 
 
 def refuse(message):
@@ -69,21 +73,10 @@ def device_from_source(source):
 
 
 def capture(cmd):
-    """Run a read-only query without echoing it.
-
-    ``system.run`` prints the command on stdout, which would corrupt
-    ``flash list --json``. Still no shell.
-    """
-    if system.DRY_RUN:
-        system.run(cmd)
-        return ""
-    try:
-        proc = subprocess.run([str(c) for c in cmd], check=False, capture_output=True, text=True)
-    except FileNotFoundError:
-        refuse(f"missing tool {cmd[0]}")
+    """Read-only query. Runs in dry-run too, and stays off stdout so --json is clean."""
+    proc = system.query(cmd)
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        refuse(f"{cmd[0]} failed: {detail}")
+        refuse(f"{cmd[0]} failed: {(proc.stderr or proc.stdout or '').strip()}")
     return proc.stdout
 
 
@@ -117,10 +110,13 @@ def walk_doc(doc):
 
 
 def build_topology(normal, inverse):
-    """Return (devices, parents). parents maps a device path to its parent path."""
+    """Return (devices, parents). parents maps a device to every device beneath it.
+
+    A set, because md and LVM can span disks, and all of those disks count.
+    """
     devices = {}
-    by_name = {}
-    for doc in (normal, inverse):
+    parents = {}
+    for doc, flipped in ((normal, False), (inverse, True)):
         for node in walk_doc(doc):
             path = node.get("path")
             if not path:
@@ -129,29 +125,13 @@ def build_topology(normal, inverse):
             for key, value in node.items():
                 if key == "children":
                     continue
-                if value is not None and value != "" and value != []:
+                if value not in (None, "", []) or key not in current:
                     current[key] = value
-                elif key not in current:
-                    current[key] = value
-            if node.get("name"):
-                by_name.setdefault(node["name"], path)
-    parents = {}
-    for node in walk_doc(normal):
-        # pkname in the normal tree is the real parent. Ignore it on the disk
-        # itself. The inverse tree flips pkname, so it is not used here.
-        if node.get("type") == "disk":
-            continue
-        parent_name = node.get("pkname")
-        parent = by_name.get(parent_name) if parent_name else None
-        if node.get("path") and parent:
-            parents.setdefault(canon(node["path"]), canon(parent))
-    for node in walk_doc(inverse):
-        # In `lsblk -s`, the children of a node are its parents.
-        if node.get("type") == "disk":
-            continue
-        kids = node.get("children") or []
-        if node.get("path") and kids and kids[0].get("path"):
-            parents.setdefault(canon(node["path"]), canon(kids[0]["path"]))
+            for kid in node.get("children") or []:
+                if kid.get("path"):
+                    # In `lsblk -s`, the children of a node are its parents.
+                    child, parent = (path, kid["path"]) if flipped else (kid["path"], path)
+                    parents.setdefault(canon(child), set()).add(canon(parent))
     return devices, parents
 
 
@@ -166,19 +146,21 @@ def node_for(path, devices):
 
 
 def ancestor_disks(path, devices, parents):
-    """Walk parents until a whole disk. Cycles return nothing (fail closed)."""
+    """Every whole disk beneath a device or findmnt source."""
+    disks = set()
     seen = set()
-    current = canon(device_from_source(path) or path)
-    while current and current not in seen:
+    stack = [canon(device_from_source(path) or path)]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
         seen.add(current)
         node = node_for(current, devices)
         if node and node.get("type") == "disk":
-            return [canon(node.get("path") or current)]
-        nxt = parents.get(current)
-        if not nxt or canon(nxt) == current:
-            return []
-        current = canon(nxt)
-    return []
+            disks.add(canon(node.get("path") or current))
+        else:
+            stack.extend(parents.get(current, ()))
+    return sorted(disks)
 
 
 def flatten_findmnt(doc):
@@ -223,12 +205,18 @@ def mount_labels(node):
 def mounts_by_disk(devices, parents, findmnt_doc, swaps_text):
     """Map each whole disk to the mount targets that resolve onto it."""
     result = {}
+    unresolved = set()
 
     def add(dev, label):
         if not dev or not label:
             return
-        for disk in ancestor_disks(dev, devices, parents):
+        disks = ancestor_disks(dev, devices, parents)
+        for disk in disks:
             result.setdefault(disk, set()).add(label)
+        node = node_for(canon(dev), devices)
+        # Loop and optical devices really have no disk under them.
+        if not disks and (node is None or node.get("type") not in ("loop", "rom")):
+            unresolved.add(label)
 
     for mount in flatten_findmnt(findmnt_doc):
         add(device_from_source(mount.get("source")), mount.get("target"))
@@ -237,6 +225,11 @@ def mounts_by_disk(devices, parents, findmnt_doc, swaps_text):
             add(node.get("path"), label)
     for dev in parse_swaps(swaps_text):
         add(dev, "swap")
+    # A mount we cannot place (say /dev/root) could be on any disk, so it blocks all of them.
+    if unresolved:
+        for path, node in devices.items():
+            if node.get("type") == "disk":
+                result.setdefault(canon(path), set()).update(unresolved)
     return result
 
 
@@ -375,13 +368,13 @@ def test_mode():
 def prepare(iso, device, confirm, snapshot=None):
     """Every safety check, except the final unmount. Raises SystemExit."""
     require_confirm(device, confirm)
+    if test_mode() and (is_under_dev(device) or is_under_dev(canon(device))):
+        # The test-file switch never opens /dev, even if a check below would
+        # have allowed that disk. Real sticks do not use this switch.
+        refuse("test mode cannot target /dev")
     iso_real = canon(iso)
     if not os.path.isfile(iso_real):
         refuse(f"ISO not found: {iso}")
-    if test_mode() and (is_under_dev(device) or is_under_dev(canon(device))):
-        # ponytail: the test-file switch never opens /dev, even if a check below
-        # would have allowed that disk. Real sticks do not use this switch.
-        refuse("test mode cannot target /dev")
     real = canon(device)
     try:
         st = os.stat(real)
@@ -595,7 +588,7 @@ def detect_mode(iso):
     elif hybrid:
         print("flash: mode raw (hybrid ISO)", flush=True)
     else:
-        print("flash: mode raw (no Windows install image)", flush=True)
+        print("flash: warning: not a hybrid ISO and not Windows, so it may not boot from USB", flush=True)
     return mode, files
 
 
@@ -648,11 +641,35 @@ def _open_target(path, block):
     return open(assert_writable_target(path, block), "r+b", buffering=1024 * 1024)
 
 
+@contextmanager
+def held_device(path, block):
+    """Kernel check, then keep udev and desktop automounters away while writing.
+
+    O_EXCL fails with EBUSY if anything still holds the disk, including an md,
+    LVM or btrfs member that no lsblk mountpoint shows. udev skips probing a
+    disk under an exclusive BSD lock, so a half-written stick is not automounted.
+    """
+    if not block:
+        yield
+        return
+    try:
+        os.close(os.open(path, os.O_RDONLY | os.O_EXCL))
+    except OSError as err:
+        refuse(f"{path} is in use: {err.strerror}")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def write_raw(iso, target, block, verify=True):
     total = os.path.getsize(iso)
     written = 0
     source_hash = hashlib.sha256()
-    with open(iso, "rb") as src, _open_target(target, block) as dst:
+    step = 64 * 1024 * 1024
+    with held_device(target, block), open(iso, "rb") as src, _open_target(target, block) as dst:
         while True:
             block_bytes = src.read(1024 * 1024)
             if not block_bytes:
@@ -661,8 +678,10 @@ def write_raw(iso, target, block, verify=True):
             source_hash.update(block_bytes)
             previous = written
             written += len(block_bytes)
-            step = 16 * 1024 * 1024
-            if total and (written == total or written // step != previous // step):
+            if written // step != previous // step:
+                # Sync as we go, or the bar races through RAM and then sits at 70%.
+                dst.flush()
+                os.fdatasync(dst.fileno())
                 system.progress(min(70, int(written * 70 / total)), "writing")
         dst.flush()
         os.fsync(dst.fileno())
@@ -686,10 +705,9 @@ def write_raw(iso, target, block, verify=True):
     system.progress(100, "verified")
 
 
-def scratch_dir():
-    path = Path(os.environ[WORK_ENV]) if os.environ.get(WORK_ENV) else DEFAULT_WORK
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def make_scratch():
+    # /var/tmp because the extract is ISO sized, and /tmp is usually RAM.
+    return Path(tempfile.mkdtemp(prefix="tuxutil-flash-", dir=os.environ.get(WORK_ENV) or "/var/tmp"))
 
 
 def mtools_env():
@@ -698,62 +716,30 @@ def mtools_env():
     return env
 
 
-def copy_sparse(src, dst, dst_offset):
-    """Copy allocated bytes only, so a large FAT image stays sparse."""
-    size = os.path.getsize(src)
-    with open(src, "rb") as source, open(dst, "r+b") as target:
-        pos = 0
-        while pos < size:
-            try:
-                data_at = os.lseek(source.fileno(), pos, os.SEEK_DATA)
-            except OSError:
-                break
-            try:
-                hole = os.lseek(source.fileno(), data_at, os.SEEK_HOLE)
-            except OSError:
-                hole = size
-            hole = min(hole, size)
-            source.seek(data_at)
-            target.seek(dst_offset + data_at)
-            left = hole - data_at
-            while left:
-                chunk = source.read(min(1024 * 1024, left))
-                if not chunk:
-                    break
-                target.write(chunk)
-                left -= len(chunk)
-            pos = hole
-        target.flush()
-        os.fsync(target.fileno())
+def partition_and_format(target, block):
+    """MBR with one FAT32 partition (type 0x0C), formatted in place. No loop device.
 
-
-def partition_and_format(target, work, block):
-    """GPT with one EFI System partition, formatted FAT32, embedded at its offset.
-
-    No loop device: those need root, and the same offset path works on a file.
-    ponytail: UEFI only. The ISO's own bootx64.efi is the Secure Boot loader.
-    There is no legacy BIOS boot sector and no third-party bootloader.
+    Not an EFI System Partition: Windows does not mount those, so Setup boots
+    and then cannot find its own files ("a media driver is missing").
+    ponytail: UEFI only, using the ISO's own Secure Boot loader. No BIOS boot
+    code, no third-party bootloader. Partitions are capped at 2 TiB by MBR.
+    --no-tell-kernel keeps partition nodes from appearing mid-write.
     """
     target = assert_writable_target(target, block)
-    script = "label: gpt\nstart=2048, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n"
     system.run(
-        ["sfdisk", "--wipe", "always", "--wipe-partitions", "always", target],
-        input=script, text=True,
+        ["sfdisk", "--wipe", "always", "--wipe-partitions", "always",
+         "--no-reread", "--no-tell-kernel", target],
+        input="label: dos\nstart=2048, type=c, bootable\n", text=True,
     )
-    info = json.loads(capture(["sfdisk", "--json", target]))
-    table = info["partitiontable"]
+    table = json.loads(capture(["sfdisk", "--json", target]))["partitiontable"]
     parts = table.get("partitions") or []
     if len(parts) != 1:
         refuse(f"expected one partition, sfdisk produced {len(parts)}")
     sector = int(table.get("sectorsize") or 512)
     offset = int(parts[0]["start"]) * sector
     length = int(parts[0]["size"]) * sector
-    fat = Path(work) / "fat.img"
-    with open(fat, "wb") as handle:
-        handle.truncate(length)
-    system.run(["mkfs.vfat", "-F", "32", "-n", "TUXUTIL", str(fat)])
-    copy_sparse(fat, target, offset)
-    fat.unlink()
+    system.run(["mkfs.vfat", "-F", "32", "-n", "TUXUTIL", f"--offset={parts[0]['start']}",
+                target, str(length // 1024)])
     return offset, length
 
 
@@ -862,40 +848,41 @@ def extracted_root(dest):
 
 def write_windows(iso, device, confirm, verify=True):
     system.require_tools(["7z", "sfdisk", "mkfs.vfat", "mcopy", "wimlib-imagex"])
-    work = scratch_dir()
-    tree = work / "extract"
-    extract_iso(iso, tree)
+    work = make_scratch()
     try:
+        tree = work / "extract"
+        extract_iso(iso, tree)
         root = extracted_root(tree)
+        # 7z invents this for the El Torito image. It is not on the ISO's filesystem.
+        shutil.rmtree(root / "[BOOT]", ignore_errors=True)
         system.progress(30, "preparing install images")
         split_oversized_wims(root)
-        # Extract can take a long time. Unmount and check again before sfdisk.
+        # Extract can take a long time. Unmount and check again before touching the disk.
         plan = prepare_for_write(iso, device, confirm)
-        system.progress(45, "partitioning")
-        offset, length = partition_and_format(plan["device"], work, plan["block"])
         payload = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-        if payload >= length:
-            refuse(f"files are {payload} bytes and the FAT partition is {length} bytes")
-        system.progress(55, "copying files")
-        copy_tree(root, plan["device"], offset)
-        fd = os.open(plan["device"], os.O_RDWR)
-        try:
-            os.fsync(fd)
-            drop_cache(fd, plan["device"])
-        finally:
-            os.close(fd)
-        if verify:
-            system.progress(80, "verifying")
-            verify_tree(root, plan["device"], offset)
+        # ponytail: 5% is a rough allowance for FAT tables and cluster slack.
+        if payload > plan["size"] * 0.95:
+            refuse(f"files are {payload} bytes and the target is {plan['size']} bytes")
+        with held_device(plan["device"], plan["block"]):
+            system.progress(45, "partitioning")
+            offset, _length = partition_and_format(plan["device"], plan["block"])
+            system.progress(55, "copying files")
+            copy_tree(root, plan["device"], offset)
+            fd = os.open(plan["device"], os.O_RDWR)
+            try:
+                os.fsync(fd)
+                drop_cache(fd, plan["device"])
+            finally:
+                os.close(fd)
+            if verify:
+                system.progress(80, "verifying")
+                verify_tree(root, plan["device"], offset)
+        if plan["block"]:
+            # The lock is gone, so the kernel can now see the finished table.
+            system.run(["blockdev", "--rereadpt", plan["device"]], check=False)
         system.progress(100, "verified" if verify else "written")
     finally:
-        if tree.exists():
-            shutil.rmtree(tree, ignore_errors=True)
-
-
-def _guard_test_dev(device):
-    if test_mode() and (is_under_dev(device) or is_under_dev(canon(device))):
-        refuse("test mode cannot target /dev")
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def cmd_list(args):
@@ -910,7 +897,6 @@ def cmd_list(args):
 
 
 def cmd_write(args):
-    _guard_test_dev(args.device)
     if test_mode():
         return cmd_write_root(args)
     # Fail closed before the root prompt when the target is obviously wrong.
@@ -920,22 +906,24 @@ def cmd_write(args):
 
 
 def cmd_write_root(args):
-    _guard_test_dev(args.device)
-    plan = prepare_for_write(args.iso, args.device, args.confirm)
+    plan = prepare(args.iso, args.device, args.confirm)
     if system.DRY_RUN:
-        print(f"flash: dry-run; not writing {plan['device']}", flush=True)
+        print(f"flash: dry-run; not unmounting or writing {plan['device']}", flush=True)
         return 0
+    # Turn SIGTERM into an exception so the scratch extract is cleaned up.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         mode, _files = detect_mode(plan["iso"])
-        # Detection only reads the ISO. Check once more before opening the target.
-        plan = prepare_for_write(args.iso, args.device, args.confirm)
         if mode == "windows":
             write_windows(args.iso, args.device, args.confirm, verify=not args.no_verify)
         else:
+            plan = prepare_for_write(args.iso, args.device, args.confirm)
             write_raw(plan["iso"], plan["device"], plan["block"], verify=not args.no_verify)
     except subprocess.CalledProcessError as err:
-        command = shlex.join(str(part) for part in err.cmd)
-        refuse(f"command failed ({err.returncode}): {command}")
+        refuse(f"command failed ({err.returncode}): {shlex.join(str(part) for part in err.cmd)}")
+    except OSError as err:
+        # For example the stick was pulled out. The stick is not usable after this.
+        raise SystemExit(f"write failed: {err}")
     return 0
 
 

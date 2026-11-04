@@ -198,8 +198,9 @@ class IsoDownloadTests(unittest.TestCase):
 
     def test_part_symlink_is_never_written_through(self):
         real_open = isodl._open_resuming
-        def link_appears_late(url, part):
-            opened = real_open(url, part)
+        def link_appears_late(url, lock):
+            opened = real_open(url, lock)
+            part = Path(os.readlink(f"/proc/self/fd/{lock}"))
             part.unlink()
             part.symlink_to(part.parent / "keep.txt")
             return opened
@@ -231,9 +232,9 @@ class IsoDownloadTests(unittest.TestCase):
 
     def test_file_created_during_the_download_is_not_replaced(self):
         real_open = isodl._open_resuming
-        def file_appears(url, part):
-            opened = real_open(url, part)
-            part.with_name("a.iso").write_text("mine")
+        def file_appears(url, lock):
+            opened = real_open(url, lock)
+            Path(os.readlink(f"/proc/self/fd/{lock}")).with_name("a.iso").write_text("mine")
             return opened
         with tempfile.TemporaryDirectory() as tmp, patch.object(isodl, "_open_resuming", file_appears):
             self.assertEqual(self.run_download(self.base + "/a.iso", Path(tmp), output=str(Path(tmp) / "a.iso")), 1)

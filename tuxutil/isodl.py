@@ -96,9 +96,9 @@ def _latest(entry):
     return url, found[0], found[1]
 
 
-def _open_resuming(url, part):
-    """Open url, resuming part if possible. Returns (response, offset); no response means part is already whole."""
-    offset = part.stat().st_size
+def _open_resuming(url, lock):
+    """Open url, resuming the locked .part if possible. Returns (response, offset); no response means it's already whole."""
+    offset = os.fstat(lock).st_size
     try:
         return _request(url, {"Range": f"bytes={offset}-"} if offset else None), offset
     except urllib.error.HTTPError as exc:
@@ -107,7 +107,7 @@ def _open_resuming(url, part):
         # Nothing left past the end: killed while checking the finished file, or the file on the server changed.
         if (exc.headers.get("Content-Range") or "").endswith(f"/{offset}"):
             return None, offset
-        os.truncate(part, 0)  # Not unlink: the lock is on this file.
+        os.ftruncate(lock, 0)
         return _request(url), 0
 
 
@@ -198,7 +198,7 @@ def cmd_download(args):
         # ponytail: a pasted link whose file changed, or another link with the same name, resumes into a mixed file.
         # Only a checksum catches that, so a resume without one warns below. Needs an ETag check.
         lock = _lock_part(part)
-        response, offset = _open_resuming(url, part)
+        response, offset = _open_resuming(url, lock)
         total = offset
         if response:
             with response:

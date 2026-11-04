@@ -712,6 +712,15 @@ if HAS_PYSIDE6:
             self.load_doctor_info()
 
         def closeEvent(self, event):
+            if self.active_process:
+                text = "A job is still running. Closing will stop it."
+                if self.active_job_is_flash:
+                    text += "\n\nStopping a USB flash may leave the drive corrupted or unbootable."
+                answer = QMessageBox.warning(self, "Job Running", text + "\n\nClose anyway?",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    event.ignore()
+                    return
             self._closing = True
             if self.active_process:
                 try:

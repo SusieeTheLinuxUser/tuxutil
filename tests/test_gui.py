@@ -106,7 +106,8 @@ class TestTuxUtilGui(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "win") and self.win:
-            self.win.close()
+            with patch.object(gui.QMessageBox, "warning", return_value=gui.QMessageBox.Yes):
+                self.win.close()
             pump_events(80)
             self.win = None
 
@@ -285,6 +286,19 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertTrue(self.win.btn_run_update.isEnabled())
         self.assertFalse(self.win.btn_cancel_job.isEnabled())
 
+    def test_closing_during_job_asks_first(self):
+        self.win.run_cli_job(["test-long", "0.05"], "Slow Job")
+        pump_events(80)
+        with patch.object(gui.QMessageBox, "warning", return_value=gui.QMessageBox.No) as ask:
+            self.win.show()
+            self.assertFalse(self.win.close())
+        ask.assert_called_once()
+        self.assertIsNotNone(self.win.active_process)
+        self.assertTrue(self.win.isVisible())
+        with patch.object(gui.QMessageBox, "warning", return_value=gui.QMessageBox.Yes):
+            self.assertTrue(self.win.close())
+        self.assertIsNone(self.win.active_process)
+
     def test_failing_job(self):
         self.win.run_cli_job(["test-fail"], "Failing Job")
         self.assertTrue(wait_until(lambda: "failed with exit code 42" in self.win.lbl_job_status.text()))
@@ -293,7 +307,8 @@ class TestTuxUtilGui(unittest.TestCase):
         # Verify that closing the window during a running job does not crash or dump core
         self.win.run_cli_job(["test-long", "0.2"], "Background Job")
         pump_events(50)
-        self.win.close()
+        with patch.object(gui.QMessageBox, "warning", return_value=gui.QMessageBox.Yes):
+            self.win.close()
         pump_events(100)
         self.assertIsNone(self.win.active_process)
 

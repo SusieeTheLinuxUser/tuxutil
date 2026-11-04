@@ -1061,6 +1061,10 @@ def _package_family(root, scratch):
 
 
 def _run_packages(root, family, add, remove, mounts):
+    # Package managers look "/" up in the mount table to check free space. pacman stops
+    # if it isn't there, so make the root a mount point first, as arch-chroot does.
+    run(["mount", "--bind", str(root), str(root)])
+    mounts.add(root)
     _mount_api(root, mounts)
     saved = _inject_resolv(root)
     policy = None
@@ -1082,10 +1086,23 @@ def _run_packages(root, family, add, remove, mounts):
             lock = root / "var/lib/pacman/db.lck"
             if lock.exists():
                 lock.unlink()
-            if remove:
-                run(["chroot", str(root), "pacman", "-Rns", "--noconfirm", *remove], env=env)
-            if add:
-                run(["chroot", str(root), "pacman", "-Sy", "--needed", "--noconfirm", *add], env=env)
+            # archiso makes its keyring at boot. One made here must not ship, or everyone
+            # booting this ISO would share the same private signing key.
+            keyring = root / "etc/pacman.d/gnupg"
+            temp_keyring = not (keyring / "pubring.gpg").exists()
+            try:
+                if temp_keyring:
+                    run(["chroot", str(root), "pacman-key", "--init"], env=env)
+                    run(["chroot", str(root), "pacman-key", "--populate"], env=env)
+                if remove:
+                    run(["chroot", str(root), "pacman", "-Rns", "--noconfirm", *remove], env=env)
+                if add:
+                    run(["chroot", str(root), "pacman", "-Sy", "--needed", "--noconfirm", *add], env=env)
+            finally:
+                if temp_keyring:
+                    run(["chroot", str(root), "gpgconf", "--homedir", "/etc/pacman.d/gnupg", "--kill", "all"],
+                        ok=(0, 1, 2), env=env)
+                    shutil.rmtree(keyring, ignore_errors=True)
         elif family == "fedora":
             if remove:
                 run(["chroot", str(root), "dnf", "remove", "-y", *remove], env=env)

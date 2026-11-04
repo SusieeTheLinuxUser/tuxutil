@@ -97,6 +97,8 @@ def _latest(entry):
 
 def _open_resuming(url, part):
     """Open url, resuming part if possible. Returns (response, offset); no response means part is already whole."""
+    if part.is_symlink():
+        raise ValueError(f"Refusing to write through a symbolic link: {part}")
     offset = part.stat().st_size if part.exists() else 0
     try:
         return _request(url, {"Range": f"bytes={offset}-"} if offset else None), offset
@@ -209,7 +211,9 @@ def cmd_download(args):
                         raise ValueError(f"Refusing to overwrite existing file: {final}")
                 received = offset
                 shown = None
-                with open(part, "ab" if offset else "wb") as stream:
+                # O_NOFOLLOW: a link swapped in since the check above must not redirect the write.
+                flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_APPEND if offset else os.O_TRUNC)
+                with os.fdopen(os.open(part, flags, 0o666), "ab" if offset else "wb") as stream:
                     while True:
                         block = response.read(1024 * 1024)
                         if not block:

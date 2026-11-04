@@ -87,6 +87,11 @@ class TestGuiNoPySide6(unittest.TestCase):
         masked = gui.mask_command_for_log(["tuxutil", "iso", "download", "https://example.test/a.iso?sig=abc&t=1"])
         self.assertNotIn("abc", masked)
         self.assertIn("https://example.test/a.iso", masked)
+        masked = gui.mask_command_for_log(["iso", "download", "https://alice:hunter2@example.test:8080/a.iso"])
+        self.assertNotIn("hunter2", masked)
+        self.assertNotIn("alice", masked)
+        self.assertIn("https://example.test:8080/a.iso", masked)
+        self.assertNotIn("sig", gui.mask_command_for_log(["https://[bad/a.iso?sig=abc"]))
 
     def test_format_size(self):
         self.assertEqual(gui.format_size(0), "0 B")
@@ -206,9 +211,11 @@ class TestTuxUtilGui(unittest.TestCase):
             tab.on_download_clicked()
             job.assert_not_called()
             warn.assert_called_once()
-            tab.download_combo.setEditText("https://example.test/a.iso")
+            tab.download_combo.setEditText("https://example.test/a.iso?sig=abc")
             tab.on_download_clicked()
-        self.assertEqual(job.call_args[0][0], ["iso", "download", "https://example.test/a.iso"])
+        self.assertEqual(job.call_args[0][0], ["iso", "download"])
+        self.assertEqual(job.call_args[1]["env"], {"TUXUTIL_DOWNLOAD_URL": "https://example.test/a.iso?sig=abc"})
+        self.assertEqual(job.call_args[0][1], "Downloading ISO")
 
     def test_cancel_says_cancelled_not_failed(self):
         self.win.run_cli_job(["test-long"], "Long job")
@@ -592,6 +599,13 @@ class ProcessFailureTest(unittest.TestCase):
             self.assertEqual(second.state(), type(second).ProcessState.Running)
             second.kill()
             self.assertTrue(wait_until(lambda: self.win.active_process is None))
+
+    def test_pasted_link_reaches_the_process_by_environment_only(self):
+        code = "import os, sys; print('ARGV', sys.argv[1:], 'ENV', os.environ.get('TUXUTIL_DOWNLOAD_URL'))"
+        with patch.dict(os.environ, {"TUXUTIL_CLI": shlex.join([sys.executable, "-c", code])}):
+            self.win.run_cli_job(["iso", "download"], "Download", env={"TUXUTIL_DOWNLOAD_URL": "https://x.test/a?sig=1"})
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertIn("ARGV ['iso', 'download'] ENV https://x.test/a?sig=1", self.win.log_text.toPlainText())
 
     def test_password_goes_through_the_environment(self):
         code = "import os, sys; print('ARGV', sys.argv[1:], 'ENV', os.environ.get('TUXUTIL_PASSWORD'))"

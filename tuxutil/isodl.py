@@ -53,18 +53,30 @@ CATALOG = [
 ]
 
 
-def _request(url, headers=None):
+def _check_url(url):
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         raise ValueError("Only http and https URLs are allowed.")
+    if "@" in parsed.netloc:
+        # urllib would look up "user:password@host" as a host name, sending the password to DNS.
+        raise ValueError("Links with a user name or password are not supported.")
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_CheckedRedirects)
+
+
+def _request(url, headers=None):
+    _check_url(url)
     request_headers = {"User-Agent": USER_AGENT}
     if headers:
         request_headers.update(headers)
-    response = urllib.request.urlopen(urllib.request.Request(url, headers=request_headers), timeout=TIMEOUT)
-    if urllib.parse.urlsplit(response.geturl()).scheme.lower() not in ("http", "https"):
-        response.close()
-        raise ValueError("Redirected download URL must use http or https.")
-    return response
+    return _opener.open(urllib.request.Request(url, headers=request_headers), timeout=TIMEOUT)
 
 
 def _latest(entry):
@@ -142,14 +154,18 @@ def cmd_list(args):
 
 def cmd_download(args):
     try:
-        url, entry = _target(args.target)
+        # The GUI sends pasted links here, because a signed link in argv is readable by other local users.
+        target = args.target or os.environ.pop("TUXUTIL_DOWNLOAD_URL", "")
+        if not target:
+            raise ValueError("TARGET is required: a catalog ID or an http(s) URL.")
+        url, entry = _target(target)
         expected = args.sha256.lower() if args.sha256 else None
         if expected and not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise ValueError("--sha256 must contain exactly 64 hexadecimal characters.")
         output = Path(args.output).expanduser() if args.output else None
         folder = output.parent if output else (Path(args.dir).expanduser() if args.dir else Path.home() / "Downloads")
         if system.DRY_RUN:
-            print(f"Would download {args.target} to {(output or folder).absolute()}")
+            print(f"Would download {entry['id'] if entry else urllib.parse.urlsplit(url).hostname} to {(output or folder).absolute()}")
             return 0
         name = None
         if entry:
@@ -219,6 +235,10 @@ def cmd_download(args):
         system.progress(100, "Download complete")
         print(f"@saved {final.absolute()}")
         return 0
+    except http.client.InvalidURL:
+        # Its text quotes the link, and a signed link's query string is its password.
+        print("Download failed: the link is not a valid URL. Spaces must be written as %20.", file=sys.stderr)
+        return 1
     except (ValueError, OSError, http.client.HTTPException, urllib.error.URLError) as exc:
         print(f"Download failed: {exc}", file=sys.stderr)
         return 1
@@ -231,7 +251,7 @@ def register(subparsers):
     listing.add_argument("--json", action="store_true", required=True)
     listing.set_defaults(func=cmd_list)
     download = commands.add_parser("download", help="download an ISO by ID or URL")
-    download.add_argument("target", metavar="TARGET")
+    download.add_argument("target", metavar="TARGET", nargs="?", help="catalog ID or http(s) URL; default: $TUXUTIL_DOWNLOAD_URL")
     output = download.add_mutually_exclusive_group()
     output.add_argument("-o", "--output", metavar="FILE")
     output.add_argument("--dir", metavar="DIR")

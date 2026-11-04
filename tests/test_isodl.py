@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import http.server
 import io
@@ -82,7 +83,7 @@ class IsoDownloadTests(unittest.TestCase):
         cls.thread.join()
 
     def run_download(self, target, folder, **kwargs):
-        return isodl.cmd_download(argparse.Namespace(target=target, dir=str(folder), output=None,
+        return isodl.cmd_download(argparse.Namespace(target=target, dir=str(folder), output=kwargs.get("output"),
                                                       sha256=kwargs.get("sha256")))
 
     def test_resume_and_range_ignored(self):
@@ -199,6 +200,7 @@ class IsoDownloadTests(unittest.TestCase):
         real_open = isodl._open_resuming
         def link_appears_late(url, part):
             opened = real_open(url, part)
+            part.unlink()
             part.symlink_to(part.parent / "keep.txt")
             return opened
         for name, wrapper in (("already there", real_open), ("appears late", link_appears_late)):
@@ -210,6 +212,41 @@ class IsoDownloadTests(unittest.TestCase):
                 self.assertEqual(self.run_download(self.base + "/a.iso", folder), 1)
                 self.assertEqual((folder / "keep.txt").read_text(), "keep this")
                 self.assertFalse((folder / "a.iso").exists())
+
+    def test_second_download_of_the_same_file_is_refused(self):
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(err):
+            part = Path(tmp) / "a.iso.part"
+            part.write_bytes(DATA[:10])
+            with open(part, "rb") as other:
+                fcntl.flock(other, fcntl.LOCK_EX)
+                self.assertEqual(self.run_download(self.base + "/a.iso", Path(tmp)), 1)
+            self.assertEqual(part.read_bytes(), DATA[:10])
+        self.assertIn("already writing", err.getvalue())
+
+    def test_failed_start_leaves_no_empty_part_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_download("http://127.0.0.1:1/a.iso", Path(tmp)), 1)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_file_created_during_the_download_is_not_replaced(self):
+        real_open = isodl._open_resuming
+        def file_appears(url, part):
+            opened = real_open(url, part)
+            part.with_name("a.iso").write_text("mine")
+            return opened
+        with tempfile.TemporaryDirectory() as tmp, patch.object(isodl, "_open_resuming", file_appears):
+            self.assertEqual(self.run_download(self.base + "/a.iso", Path(tmp), output=str(Path(tmp) / "a.iso")), 1)
+            self.assertEqual((Path(tmp) / "a.iso").read_text(), "mine")
+            self.assertEqual((Path(tmp) / "a.iso.part").read_bytes(), DATA)
+
+    def test_resume_without_a_checksum_warns(self):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(out):
+            (Path(tmp) / "a.iso.part").write_bytes(DATA[:10])
+            self.assertEqual(self.run_download(self.base + "/a.iso", Path(tmp)), 0)
+            self.assertEqual((Path(tmp) / "a.iso").read_bytes(), DATA)
+        self.assertIn("was resumed", out.getvalue())
 
     def test_no_target_at_all_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ"):

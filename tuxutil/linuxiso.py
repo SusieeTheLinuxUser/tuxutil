@@ -807,11 +807,10 @@ def inner_build(args, scratch):
         deletes, maps = _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed)
         partitions = patch_appended_partitions(iso, scratch / "meta", label, args.label or "",
                                                list(args.kernel_arg or []), args.default_timeout, args.hostname)
-        if out.exists():
-            out.unlink()
         system.progress(90, "writing ISO")
-        run(xorriso_rebuild_cmd(iso, out, label=args.label or "", deletes=deletes,
-                                 maps=[(host, path) for path, host in maps.items()], partitions=partitions))
+        with system.atomic_output(out) as partial:
+            run(xorriso_rebuild_cmd(iso, partial, label=args.label or "", deletes=deletes,
+                                     maps=[(host, path) for path, host in maps.items()], partitions=partitions))
         system.progress(100, "done")
         print(f"Wrote {out}")
     finally:

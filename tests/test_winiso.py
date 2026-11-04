@@ -2,6 +2,7 @@
 
 import json
 import os
+import tempfile
 import textwrap
 import unittest
 import xml.etree.ElementTree as ET
@@ -557,6 +558,23 @@ class TestOptionParsing(unittest.TestCase):
         self.assertEqual(system.tool_package("7z", "debian"), "p7zip-full")
         self.assertEqual(system.tool_package("7z", "fedora"), "p7zip-plugins")
         self.assertIn(system.tool_package("7z", "suse"), ("p7zip", "7zip"))
+
+
+class TestWorkDirAndQuoting(unittest.TestCase):
+    def test_user_work_dir_is_not_the_build_dir(self):
+        with tempfile.TemporaryDirectory() as folder:
+            own = winiso._own_work_dir(folder, os.path.join(folder, "out.iso"))
+            self.assertNotEqual(own, os.path.abspath(folder))
+            self.assertEqual(os.path.dirname(own), os.path.abspath(folder))
+
+    def test_default_work_dir_follows_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = os.path.join(folder, "out.iso")
+            self.assertEqual(winiso._own_work_dir(None, out), out + ".work")
+
+    def test_driver_destination_with_space_is_quoted(self):
+        lines = winiso._wim_update_lines("/s.ps1", ["/home/u/My Drivers"], False)
+        self.assertIn('add "/home/u/My Drivers" "/Drivers/My Drivers"', lines)
 
 
 class TestLocaleDefaults(unittest.TestCase):

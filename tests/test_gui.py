@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import shlex
 import sys
 import unittest
 from pathlib import Path
@@ -409,6 +410,69 @@ class TestRenderScreenshots(unittest.TestCase):
 
         win.close()
         pump_events(80)
+
+
+@unittest.skipUnless(HAS_PYSIDE6, "PySide6 not installed")
+class ProcessFailureTest(unittest.TestCase):
+    def setUp(self):
+        get_qapp()
+        patcher = patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} {FAKE_CLI_PATH}"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.win = gui.TuxUtilWindow()
+        self.addCleanup(self.win.close)
+        wait_until(lambda: not self.win._active_queries)
+
+    def test_program_that_cannot_start_reports_and_recovers(self):
+        results = []
+        with patch.dict(os.environ, {"TUXUTIL_CLI": "/nonexistent/tuxutil"}):
+            self.win.run_cli_query(["doctor"], lambda code, out, err: results.append((code, err)))
+            self.assertTrue(wait_until(lambda: results))
+            self.assertEqual(results[0][0], -1)
+            self.assertTrue(results[0][1])
+            self.assertFalse(self.win._active_queries)
+            self.win.run_cli_job(["update"], "Update")
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertFalse(self.win.btn_cancel_job.isEnabled())
+        self.assertIn("failed", self.win.lbl_job_status.text())
+
+    def test_cancel_timer_does_not_kill_the_next_job(self):
+        with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}):
+            self.win.run_cli_job(["import time; time.sleep(30)"], "First")
+            first = self.win.active_process
+            self.assertTrue(first.waitForStarted(5000))
+            self.win.on_cancel_active_job()
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+            self.win.run_cli_job(["import time; time.sleep(30)"], "Second")
+            second = self.win.active_process
+            self.assertTrue(second.waitForStarted(5000))
+            pump_events(1300)
+            self.assertIs(self.win.active_process, second)
+            self.assertEqual(second.state(), type(second).ProcessState.Running)
+            second.kill()
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+
+    def test_password_goes_through_the_environment(self):
+        code = "import os, sys; print('ARGV', sys.argv[1:], 'ENV', os.environ.get('TUXUTIL_PASSWORD'))"
+        with patch.dict(os.environ, {"TUXUTIL_CLI": shlex.join([sys.executable, "-c", code])}):
+            self.win.run_cli_job(["winiso", "build", "--password", "hunter2", "--username", "tux"], "Build")
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        log = self.win.log_text.toPlainText()
+        self.assertIn("ARGV ['winiso', 'build', '--username', 'tux'] ENV hunter2", log)
+
+    def test_stale_linux_info_cannot_enable_build(self):
+        tab = self.win.tab_linuxiso
+        tab.iso_path_edit.setText("/fake/path/archlinux-live.iso")
+        tab.iso_path_edit.setText("/fake/path/unsupported-live.iso")
+        self.assertTrue(wait_until(lambda: "Unsupported" in tab.lbl_supported.text()))
+        wait_until(lambda: not self.win._active_queries)
+        self.assertFalse(tab.btn_build.isEnabled())
+        tab.iso_path_edit.setText("/fake/path/archlinux-live.iso")
+        self.assertTrue(wait_until(lambda: "Supported" in tab.lbl_supported.text() and "Un" not in tab.lbl_supported.text()))
+        self.assertTrue(tab.btn_build.isEnabled())
+        tab.iso_path_edit.setText("")
+        self.win.set_actions_enabled(True)
+        self.assertFalse(tab.btn_build.isEnabled())
 
 
 class DryRunTest(unittest.TestCase):

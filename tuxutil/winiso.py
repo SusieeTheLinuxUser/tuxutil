@@ -1084,7 +1084,7 @@ def options_from_args(args) -> BuildOptions:
         apply_tweaks=not args.no_tweaks,
         bypass_requirements=not args.no_bypass,
         local_username=args.username or "",
-        local_password=args.password or "",
+        local_password=args.password or os.environ.pop("TUXUTIL_PASSWORD", ""),
         locale=args.locale or "",
         keyboard=args.keyboard or "",
         timezone=args.timezone or "",
@@ -1118,7 +1118,7 @@ def _option_table():
         {"flag": "--username", "type": "str", "label": "Local Username",
          "help": "Local account username (default: User).", "default": "User"},
         {"flag": "--password", "type": "str", "label": "Local Password",
-         "help": "Optional. Stored in plain text on the ISO until first logon, so keep the ISO private.",
+         "help": "Optional. Stored in plain text in the ISO, so keep the ISO private.",
          "default": ""},
         {"flag": "--locale", "type": "str", "label": "Locale",
          "help": "System locale (e.g. en-US). Default: from the source image.", "default": ""},
@@ -1200,7 +1200,7 @@ def register(sub):
     build.add_argument("--no-tweaks", action="store_true", help="skip registry tweaks")
     build.add_argument("--no-bypass", action="store_true", help="don't bypass TPM/Secure Boot/RAM/CPU checks")
     build.add_argument("--username", default="User", help="local account username")
-    build.add_argument("--password", default="", help="local account password")
+    build.add_argument("--password", default="", help="local account password. Other processes can read this flag, so prefer the TUXUTIL_PASSWORD environment variable")
     build.add_argument("--locale", default="", help="system locale (e.g. en-US)")
     build.add_argument("--keyboard", default="", help="keyboard layout")
     build.add_argument("--timezone", default="", help="Windows timezone name")

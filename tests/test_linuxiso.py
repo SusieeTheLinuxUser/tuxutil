@@ -1,9 +1,11 @@
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tuxutil import linuxiso
@@ -198,6 +200,80 @@ class IsoMetadataTest(unittest.TestCase):
         self.assertNotIn("-o", [spec["flag"] for spec in specs])
         for spec in specs:
             self.assertLessEqual({"flag", "type", "label", "help", "default", "choices"}, set(spec))
+
+
+class ImageSymlinkTest(unittest.TestCase):
+    """A crafted image must not redirect writes from the host onto the user's files."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "root"
+        self.root.mkdir()
+        self.outside = Path(tmp.name) / "outside"
+        self.outside.mkdir()
+        self.victim = self.outside / "victim"
+        self.victim.write_text("precious")
+        self.script = Path(tmp.name) / "first.sh"
+        self.script.write_text("#!/bin/sh\n")
+
+    def args(self, **kw):
+        return SimpleNamespace(**{"overlay": None, "hostname": None, "first_boot": None, **kw})
+
+    def test_file_symlink_is_replaced(self):
+        (self.root / "etc").mkdir()
+        (self.root / "etc/hostname").symlink_to(self.victim)
+        linuxiso._apply_identity(self.root, self.args(hostname="box"))
+        self.assertEqual(self.victim.read_text(), "precious")
+        self.assertFalse((self.root / "etc/hostname").is_symlink())
+        self.assertEqual((self.root / "etc/hostname").read_text(), "box\n")
+
+    def test_folder_symlink_out_of_the_root_is_refused(self):
+        (self.root / "etc").symlink_to(self.outside)
+        with self.assertRaises(SystemExit):
+            linuxiso._apply_identity(self.root, self.args(hostname="box"))
+        (self.root / "usr").symlink_to(self.outside)
+        with self.assertRaises(SystemExit):
+            linuxiso._install_first_boot(self.root, self.script)
+        self.assertEqual([p.name for p in self.outside.iterdir()], ["victim"])
+
+    def test_folder_symlink_inside_the_root_still_works(self):
+        (self.root / "real").mkdir()
+        (self.root / "etc").symlink_to("real")
+        linuxiso._apply_identity(self.root, self.args(hostname="box"))
+        self.assertEqual((self.root / "real/hostname").read_text(), "box\n")
+
+    def test_overlay_does_not_write_through_a_file_symlink(self):
+        overlay = self.outside / "overlay"
+        overlay.mkdir()
+        (overlay / "f").write_text("new")
+        (self.root / "f").symlink_to(self.victim)
+        linuxiso._copy_tree(overlay, self.root)
+        self.assertEqual(self.victim.read_text(), "precious")
+        self.assertEqual((self.root / "f").read_text(), "new")
+
+    def test_resolv_conf_saved_marker_cannot_escape(self):
+        (self.root / "etc").mkdir()
+        (self.root / "etc/resolv.conf.tuxutil-saved").symlink_to(self.victim)
+        (self.root / "etc/resolv.conf").symlink_to("../run/resolv.conf")
+        saved = linuxiso._inject_resolv(self.root)
+        self.assertEqual(self.victim.read_text(), "precious")
+        linuxiso._restore_resolv(self.root, saved)
+        self.assertEqual(os.readlink(self.root / "etc/resolv.conf"), "../run/resolv.conf")
+
+    def test_symlinked_boot_config_is_left_alone(self):
+        def extract(_iso, _path, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(self.victim)
+        self.victim.write_text("linux /vmlinuz quiet\n")
+        info = {"squashfs": "/live/fs.squashfs"}
+        built = self.outside / "built"
+        built.write_text("x")
+        args = SimpleNamespace(kernel_arg=["console=ttyS0"], label="", default_timeout=2, hostname="")
+        with patch.object(linuxiso, "extract_file", extract):
+            linuxiso._metadata_and_boot("x.iso", ["/boot/grub/grub.cfg"], self.outside / "work", info, "L", args,
+                                        self.root, {"/live/fs.squashfs": built})
+        self.assertEqual(self.victim.read_text(), "linux /vmlinuz quiet\n")
 
 
 if __name__ == "__main__":

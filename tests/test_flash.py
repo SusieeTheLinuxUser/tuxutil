@@ -464,5 +464,20 @@ def argparse_ns(iso, device, confirm, no_verify=False, json=False):
     return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json)
 
 
+class HybridBootTest(unittest.TestCase):
+    """Summaries are xorriso's real output for the ISO named."""
+
+    def test_summaries(self):
+        for text, want in (
+            ("System area summary: MBR isohybrid cyl-align-off GPT\n", True),  # Arch
+            ("System area summary: MBR protective-msdos-label grub2-mbr cyl-align-off GPT\n", True),  # Ubuntu
+            ("System area summary: MBR grub2-mbr cyl-align-off\n", True),  # Manjaro
+            ("xorriso : NOTE : No System Area was loaded\n", False),  # Windows 11, Tails
+        ):
+            done = subprocess.CompletedProcess([], 0, text, "")
+            with mock.patch.object(flash.subprocess, "run", return_value=done):
+                self.assertEqual(flash.hybrid_boot("x.iso"), want, text)
+
+
 if __name__ == "__main__":
     unittest.main()

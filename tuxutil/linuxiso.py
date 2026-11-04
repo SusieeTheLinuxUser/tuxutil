@@ -944,10 +944,8 @@ def _apply_identity(root, args):
     if args.overlay:
         _copy_tree(Path(args.overlay), root)
     if args.hostname:
-        etc = root / "etc"
-        etc.mkdir(parents=True, exist_ok=True)
-        (etc / "hostname").write_text(args.hostname + "\n")
-        hosts = etc / "hosts"
+        _inside(root, "etc/hostname").write_text(args.hostname + "\n")
+        hosts = root / "etc/hosts"
         if hosts.is_file() and not hosts.is_symlink():
             rows = []
             replaced = False
@@ -964,19 +962,28 @@ def _apply_identity(root, args):
         _install_first_boot(root, Path(args.first_boot))
 
 
+def _inside(root, rel):
+    """Return root/rel, safe to write from the host, where the image's symlinks would otherwise lead out.
+
+    ponytail: resolves on the host, so an absolute link to a folder inside the image is refused too.
+    """
+    path = root / rel
+    if not path.parent.resolve().is_relative_to(root.resolve()):
+        raise SystemExit(f"Refusing to write {rel}: a symlink in the image points outside it.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        path.unlink()
+    return path
+
+
 def _install_first_boot(root, script):
-    lib = root / "usr/local/lib/tuxutil"
-    lib.mkdir(parents=True, exist_ok=True)
-    target = lib / "first-boot"
+    target = _inside(root, "usr/local/lib/tuxutil/first-boot")
     shutil.copyfile(script, target)
     target.chmod(0o755)
-    wrapper = root / "usr/local/sbin/tuxutil-firstboot"
-    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper = _inside(root, "usr/local/sbin/tuxutil-firstboot")
     wrapper.write_text("#!/bin/sh\nexec /bin/sh /usr/local/lib/tuxutil/first-boot\n")
     wrapper.chmod(0o755)
-    unit_dir = root / "etc/systemd/system"
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    (unit_dir / "tuxutil-firstboot.service").write_text(
+    _inside(root, "etc/systemd/system/tuxutil-firstboot.service").write_text(
         "[Unit]\n"
         "Description=TuxUtil first boot\n"
         "ConditionPathExists=!/var/lib/tuxutil-firstboot.stamp\n"
@@ -992,16 +999,12 @@ def _install_first_boot(root, script):
         "[Install]\n"
         "WantedBy=multi-user.target\n"
     )
-    wants = unit_dir / "multi-user.target.wants"
-    wants.mkdir(parents=True, exist_ok=True)
-    link = wants / "tuxutil-firstboot.service"
-    if link.is_symlink() or link.exists():
+    link = _inside(root, "etc/systemd/system/multi-user.target.wants/tuxutil-firstboot.service")
+    if link.exists():
         link.unlink()
     link.symlink_to("/etc/systemd/system/tuxutil-firstboot.service")
     # Fedora applies presets on first boot, and its default is `disable *`.
-    presets = root / "etc/systemd/system-preset"
-    presets.mkdir(parents=True, exist_ok=True)
-    (presets / "00-tuxutil.preset").write_text("enable tuxutil-firstboot.service\n")
+    _inside(root, "etc/systemd/system-preset/00-tuxutil.preset").write_text("enable tuxutil-firstboot.service\n")
 
 
 def _has_systemd(root):
@@ -1046,8 +1049,7 @@ def _run_packages(root, family, add, remove, mounts):
     try:
         env = _chroot_env()
         if family == "debian":
-            policy = root / "usr/sbin/policy-rc.d"
-            policy.parent.mkdir(parents=True, exist_ok=True)
+            policy = _inside(root, "usr/sbin/policy-rc.d")
             policy.write_text("#!/bin/sh\nexit 101\n")
             policy.chmod(0o755)
             apt = ["chroot", str(root), "apt-get", "-y", "-o", "APT::Sandbox::User=root",
@@ -1125,9 +1127,8 @@ def _mount_api(root, mounts):
 
 
 def _inject_resolv(root):
+    saved = _inside(root, "etc/resolv.conf.tuxutil-saved")
     dest = root / "etc/resolv.conf"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    saved = root / "etc/resolv.conf.tuxutil-saved"
     if dest.is_symlink():
         saved.write_text("symlink:" + os.readlink(dest))
         dest.unlink()
@@ -1201,7 +1202,8 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
             extract_file(iso, path, dest)
         except SystemExit:
             continue
-        if not dest.is_file():
+        # A symlink extracted from the ISO could point at any file on this machine.
+        if dest.is_symlink() or not dest.is_file():
             continue
         data = dest.read_bytes()
         if _is_fat(data):
@@ -1324,7 +1326,9 @@ def _hash_file(path, kind):
 
 def _copy_tree(src, dst):
     dst.mkdir(parents=True, exist_ok=True)
-    run(["cp", "-a", str(src) + "/.", str(dst) + "/"])
+    # --remove-destination replaces a file symlink instead of writing through it. cp refuses to
+    # copy a folder over a folder symlink. ponytail: so overlay bin/ fails on usr-merged images.
+    run(["cp", "-a", "--remove-destination", str(src) + "/.", str(dst) + "/"])
 
 
 class _Mounts:

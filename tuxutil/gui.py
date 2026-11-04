@@ -10,7 +10,7 @@ from pathlib import Path
 
 # PySide6 is imported lazily so tuxutil can run headless in CI without GUI dependencies.
 try:
-    from PySide6.QtCore import QProcess, Qt, Signal
+    from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, Signal
     from PySide6.QtGui import QColor, QFont
     from PySide6.QtWidgets import (
         QApplication,
@@ -51,6 +51,14 @@ def get_cli_base_cmd():
     from . import system
     # GUI actions run as new CLI processes, so `tuxutil --dry-run gui` must pass the flag on.
     return [*system.self_cmd(), *(["--dry-run"] if system.DRY_RUN else [])]
+
+
+def split_password(args):
+    """Take --password's value out of argv, where other processes can read it in /proc."""
+    if "--password" not in args:
+        return args, ""
+    i = args.index("--password")
+    return args[:i] + args[i + 2:], args[i + 1]
 
 
 def mask_command_for_log(cmd):
@@ -486,7 +494,8 @@ if HAS_PYSIDE6:
                 return
             self.main_win.run_cli_job(
                 [self.catalog_type, action, *ids],
-                f"{action.capitalize()}ing {len(ids)} {self.catalog_type}",
+                f"{ {'install': 'Installing', 'remove': 'Removing', 'apply': 'Applying', 'undo': 'Undoing'}[action] } "
+                f"{len(ids)} {self.catalog_type}",
                 on_finished=self.load_catalog,
             )
 
@@ -613,10 +622,13 @@ if HAS_PYSIDE6:
 
         def on_iso_path_changed(self):
             path = self.iso_path_edit.text().strip()
+            if self.flavor == "linuxiso":
+                # Build stays blocked until this path has been inspected.
+                self.lbl_supported.setText("—")
+                self.lbl_supported.setStyleSheet("")
+                self.btn_build.setEnabled(False)
             if path and (Path(path).is_file() or os.environ.get("TUXUTIL_CLI")):
                 self.on_refresh_info()
-            elif self.flavor == "linuxiso":
-                self.btn_build.setEnabled(False)
 
         def on_refresh_info(self):
             path = self.iso_path_edit.text().strip()
@@ -625,6 +637,8 @@ if HAS_PYSIDE6:
             self.banner.setVisible(False)
 
             def on_done(exit_code, stdout, stderr):
+                if path != self.iso_path_edit.text().strip():
+                    return  # The field has moved on to another ISO.
                 if exit_code != 0:
                     self.banner.show_error(
                         f"{self.flavor} Info Inspection Failed",
@@ -664,7 +678,7 @@ if HAS_PYSIDE6:
                         self.lbl_supported.setText("✅ Supported")
                         self.lbl_supported.setStyleSheet("color: #2e7d32; font-weight: bold;")
                         self.lbl_notes.setStyleSheet("color: #2e7d32;")
-                        self.btn_build.setEnabled(True)
+                        self.btn_build.setEnabled(self.main_win.active_process is None)
                     else:
                         self.lbl_supported.setText("❌ Unsupported")
                         self.lbl_supported.setStyleSheet("color: #d32f2f; font-weight: bold;")
@@ -1244,6 +1258,13 @@ if HAS_PYSIDE6:
             proc.readyReadStandardOutput.connect(on_out)
             proc.readyReadStandardError.connect(on_err)
             proc.finished.connect(on_finish)
+            # Qt does not emit finished when the program can't start.
+            def on_error(error):
+                if error == QProcess.ProcessError.FailedToStart:
+                    stderr_buf.append(proc.errorString())
+                    on_finish(-1, None)
+
+            proc.errorOccurred.connect(on_error)
             proc.start(full_cmd[0], full_cmd[1:])
 
         def run_cli_job(self, args, job_title="Job", is_flash=False, on_finished=None):
@@ -1254,6 +1275,7 @@ if HAS_PYSIDE6:
 
             self.active_job_is_flash = is_flash
             base_cmd = get_cli_base_cmd()
+            args, password = split_password(args)
             full_cmd = base_cmd + args
 
             masked_str = mask_command_for_log(full_cmd)
@@ -1268,6 +1290,10 @@ if HAS_PYSIDE6:
 
             proc = QProcess(self)
             self.active_process = proc
+            if password:
+                env = QProcessEnvironment.systemEnvironment()
+                env.insert("TUXUTIL_PASSWORD", password)
+                proc.setProcessEnvironment(env)
             line_buf = ""
 
             def handle_stream(text):
@@ -1319,6 +1345,13 @@ if HAS_PYSIDE6:
             proc.readyReadStandardOutput.connect(on_out)
             proc.readyReadStandardError.connect(on_err)
             proc.finished.connect(on_finish)
+            # Qt does not emit finished when the program can't start.
+            def on_error(error):
+                if error == QProcess.ProcessError.FailedToStart:
+                    self.log_text.appendPlainText(proc.errorString())
+                    on_finish(-1, None)
+
+            proc.errorOccurred.connect(on_error)
             proc.start(full_cmd[0], full_cmd[1:])
 
         def on_cancel_active_job(self):
@@ -1340,10 +1373,12 @@ if HAS_PYSIDE6:
             self.log_text.appendPlainText("\n⚠️ Terminating job at user request...")
             self.lbl_job_status.setText("Terminating job...")
             self.lbl_job_status.setStyleSheet("font-weight: bold; color: #e65100;")
-            self.active_process.terminate()
+            proc = self.active_process
+            proc.terminate()
 
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(1000, lambda: self.active_process and self.active_process.kill())
+            # Only this job: another may have started by the time the timer fires.
+            QTimer.singleShot(1000, lambda: self.active_process is proc and proc.kill())
 
         def set_actions_enabled(self, enabled):
             """Enable or disable trigger buttons during long job runs."""

@@ -167,7 +167,7 @@ class DryRunTest(unittest.TestCase):
         with as_family("arch"):
             rc, out, _ = invoke(["--dry-run", "apps", "remove", "spotify"])
         self.assertEqual(rc, 0)
-        self.assertEqual(commands(out), [["flatpak", "uninstall", "--user", "-y", "com.spotify.Client"]])
+        self.assertEqual(commands(out), [["flatpak", "uninstall", "-y", "com.spotify.Client"]])
         assert_flatpak_unprivileged(self, out)
 
     def test_remove_uses_the_remove_command(self):
@@ -288,6 +288,31 @@ class RootBatchTest(unittest.TestCase):
         one.assert_not_called()
         batch.assert_called_once_with([["pacman", "-Sy"], ["pacman", "-Su"]])
         run.assert_called_once_with(["sudo", "sh", "-c", "joined"])
+
+
+class RemovePlanTest(unittest.TestCase):
+    APP = {"id": "fx", "packages": {"arch": ["firefox"]}, "flatpak": "org.mozilla.firefox"}
+    DISTRO = system.Distro("arch", "Arch", "arch")
+
+    def test_removes_the_variant_that_is_installed(self):
+        for installed, want in (
+            (({"firefox"}, set()), (["firefox"], [])),
+            ((set(), {"org.mozilla.firefox"}), ([], ["org.mozilla.firefox"])),
+            (({"firefox"}, {"org.mozilla.firefox"}), (["firefox"], ["org.mozilla.firefox"])),
+            ((set(), set()), (["firefox"], [])),
+        ):
+            native, flatpaks, _ = apps.plan([self.APP], self.DISTRO, installed)
+            self.assertEqual((native, flatpaks), want, installed)
+
+
+class InstalledNamesTest(unittest.TestCase):
+    def test_debian_ignores_packages_removed_with_config_left(self):
+        rows = "installed vlc\nconfig-files gimp\nnot-installed foo\n"
+        done = subprocess.CompletedProcess([], 0, rows, "")
+        fail = subprocess.CompletedProcess([], 1, "", "")
+        with mock.patch.object(system, "query", side_effect=[done, fail]):
+            native, _ = apps.installed_names("debian")
+        self.assertEqual(native, {"vlc"})
 
 
 if __name__ == "__main__":

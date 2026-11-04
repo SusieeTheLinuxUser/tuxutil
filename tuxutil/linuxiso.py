@@ -12,7 +12,6 @@ import os
 import re
 import shlex
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -20,7 +19,6 @@ from pathlib import Path
 
 from . import system
 
-SCRATCH = Path("/home/susiee/Projects/tuxutil/.work/linuxiso")
 COMPRESSIONS = ("gzip", "xz", "zstd", "lzo")
 # erofs has no lzo. gzip/xz are the squashfs names; erofs calls them deflate/lzma.
 EROFS_COMP = {"gzip": "deflate", "xz": "lzma", "zstd": "zstd"}
@@ -36,9 +34,6 @@ EXT4_MAGIC_OFF = 0x438
 def option_specs():
     """Every build option, in the shape the GUI turns into a form."""
     return [
-        {"flag": "-o", "type": "path", "label": "Output ISO",
-         "help": "Where to write the remastered ISO. Must not be the input file.",
-         "default": "", "choices": []},
         {"flag": "--add-pkg", "type": "list", "label": "Add packages",
          "help": "Packages to install with the live system's own package manager. Repeat the flag.",
          "default": [], "choices": []},
@@ -156,18 +151,13 @@ def cmd_build(args):
     if args.first_boot and not Path(args.first_boot).is_file():
         raise SystemExit(f"First-boot script not found: {args.first_boot}")
     system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap"])
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    need = bytes_needed(iso.stat().st_size)
-    err = space_error(shutil.disk_usage(SCRATCH).free, need)
+    err = space_error(shutil.disk_usage(out.parent).free, bytes_needed(iso.stat().st_size))
     if err:
-        raise SystemExit(err + f" ({SCRATCH})")
-    out_free = shutil.disk_usage(out.parent).free
-    # Output may share the scratch filesystem; only complain when it is clearly short on its own.
-    if out.parent.resolve() != SCRATCH.resolve() and space_error(out_free, iso.stat().st_size + 1024**3):
-        raise SystemExit(space_error(out_free, iso.stat().st_size + 1024**3) + f" ({out.parent})")
+        raise SystemExit(err + f" ({out.parent})")
 
     if os.environ.get("TUXUTIL_LINUXISO_INNER") != "1":
-        scratch = SCRATCH / f"build-{os.getpid()}"
+        # Next to the output, the one place the user has said has room.
+        scratch = Path(str(out) + ".work")
         scrub(scratch)
         scratch.mkdir(parents=True)
         env = os.environ.copy()
@@ -286,6 +276,9 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
+        if family == "debian" and boot_text and "boot=live" not in boot_text:
+            supported = False
+            notes.append("Boots the Debian installer, not a live system, so changes to the live root would not take effect.")
         if label.upper().startswith("TAILS") or "tails" in boot_text.lower():
             notes.append("Tails verifies the live filesystem and may refuse to boot a modified image.")
     else:
@@ -447,9 +440,15 @@ def is_label_carrier(path):
     return False
 
 
-def patch_boot_text(text, *, old_label="", new_label="", kernel_args=(), timeout=None, kind="grub"):
+def patch_boot_text(text, *, old_label="", new_label="", kernel_args=(), timeout=None, kind="grub", hostname=""):
     if old_label and new_label and old_label != new_label and old_label in text:
         text = text.replace(old_label, new_label)
+    # Our changes invalidate the media checksum, and on Fedora the default entry
+    # halts the boot when that check fails.
+    text = re.sub(r"[ \t]+rd\.live\.check\b", "", text)
+    if hostname:
+        # casper's hostname= beats /etc/hostname.
+        text = re.sub(r"\bhostname=\S+", f"hostname={hostname}", text)
     if kernel_args:
         text = _add_kernel_args(text, list(kernel_args), kind)
     if timeout is not None and kind in {"grub", "syslinux", "loader"}:
@@ -485,9 +484,11 @@ def _append_cmdline(body, args):
     if not extra:
         return body
     addition = " ".join(extra)
-    if " ---" in body:
-        pre, post = body.split(" ---", 1)
-        return (pre.rstrip() + " " + addition).rstrip() + " ---" + post
+    # The kernel stops reading its own arguments at "--", and "---" marks the same
+    # spot for Debian-style installers. Ours have to go before either.
+    sep = re.search(r"\s--(-)?(\s|$)", body)
+    if sep:
+        return body[:sep.start()].rstrip() + " " + addition + body[sep.start():]
     if body.strip() == "":
         return addition
     return body.rstrip() + " " + addition
@@ -508,62 +509,20 @@ def _set_timeout(text, seconds, kind):
     return f"set timeout={seconds}\n" + text
 
 
-def patch_embedded_label(data, old, new):
-    """Replace a volume label inside a boot binary without shifting later bytes.
-
-    A different length is applied only when the old label is a NUL-terminated
-    string (or has enough trailing NULs). A label sitting in the middle of a
-    kernel command line must keep its length, or the rest of the line would be
-    cut or overwritten.
-    """
-    if not old or old == new:
-        return data
-    old_b, new_b = old.encode(), new.encode()
-    if old_b not in data:
-        return data
-    if len(new_b) == len(old_b):
-        return data.replace(old_b, new_b)
-    out = bytearray()
-    i = 0
-    while True:
-        j = data.find(old_b, i)
-        if j < 0:
-            out += data[i:]
-            break
-        after = j + len(old_b)
-        if len(new_b) < len(old_b):
-            if after >= len(data) or data[after] != 0:
-                raise SystemExit(
-                    f"Volume label {old!r} is embedded in a boot binary. "
-                    f"The new label must be exactly {len(old_b)} bytes, or the command line after it would be damaged.")
-            out += data[i:j] + new_b + b"\x00" * (len(old_b) - len(new_b))
-            i = after
-            continue
-        extra = len(new_b) - len(old_b)
-        if data[after:after + extra] == b"\x00" * extra:
-            out += data[i:j] + new_b
-            i = after + extra
-            continue
-        raise SystemExit(
-            f"Volume label {old!r} is embedded in a boot binary with no room to grow. "
-            f"Use a label of at most {len(old_b)} bytes.")
-    return bytes(out)
-
-
-def device_pseudo(pf_text):
-    """Keep character and block device lines from ``unsquashfs -pf`` output.
+def device_pseudo(listing):
+    """mksquashfs pseudo lines for the device nodes in ``unsquashfs -lln`` output.
 
     Device nodes cannot be created in a user namespace, so mksquashfs rebuilds
     them from these definitions instead of from the unpacked tree.
     """
     kept = []
-    for line in pf_text.splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        parts = line.split()
-        if len(parts) >= 2 and parts[1] in {"C", "B", "c", "b"}:
-            kept.append(line)
-    return ("\n".join(kept) + "\n") if kept else ""
+    for line in listing.splitlines():
+        m = re.match(r"^([cb])(\S{9}) (\d+)/(\d+)\s+(\d+),\s*(\d+) \S+ \S+ squashfs-root/(\S+)$", line)
+        if m:
+            kind, perms, uid, gid, major, minor, path = m.groups()
+            bits = "".join("0" if c in "-ST" else "1" for c in perms)
+            kept.append(f"{path} {kind} {int(bits, 2):o} {uid} {gid} {major} {minor}")
+    return "\n".join(kept) + "\n" if kept else ""
 
 
 def update_md5sum(text, updates):
@@ -587,21 +546,6 @@ def update_md5sum(text, updates):
     return ("\n".join(lines) + "\n") if lines else ""
 
 
-def update_manifest(old_text, before, after):
-    """Apply a package-list delta to a dpkg manifest (name, tab, version)."""
-    current = _parse_manifest(old_text)
-    if not current and after:
-        current = dict(after)
-    else:
-        for name, ver in after.items():
-            if before.get(name) != ver:
-                current[name] = ver
-        for name in before:
-            if name not in after:
-                current.pop(name, None)
-    return "".join(f"{name}\t{current[name]}\n" for name in sorted(current))
-
-
 def format_sha512(digest, basename):
     # archiso checks `sha512sum` output: hex, two spaces, filename.
     return f"{digest}  {basename}\n"
@@ -618,21 +562,6 @@ def stale_signature_paths(paths, changed):
         if path.endswith("/md5sum.txt.gpg"):
             stale.append(path)
     return sorted(set(stale))
-
-
-def _parse_manifest(text):
-    out = {}
-    for line in (text or "").splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        if "\t" in line:
-            name, ver = line.split("\t", 1)
-        elif " " in line:
-            name, ver = line.split(None, 1)
-        else:
-            name, ver = line, ""
-        out[name.strip()] = ver.strip()
-    return out
 
 
 def _md5_key(rel):
@@ -660,10 +589,11 @@ def same_path(a, b):
         return os.path.abspath(a) == os.path.abspath(b)
 
 
-def xorriso_rebuild_cmd(src, dst, *, label="", deletes=(), maps=()):
+def xorriso_rebuild_cmd(src, dst, *, label="", deletes=(), maps=(), partitions=()):
     """Replay the source boot setup after mapping changed files.
 
-    ``-boot_image any replay`` is last so El Torito sees the replaced files.
+    ``-boot_image any replay`` comes after the maps so El Torito sees the
+    replaced files, and before ``partitions`` so those replace what it replayed.
     """
     cmd = ["xorriso", "-indev", str(src), "-outdev", str(dst), "-overwrite", "on"]
     if label:
@@ -673,6 +603,8 @@ def xorriso_rebuild_cmd(src, dst, *, label="", deletes=(), maps=()):
     for host, iso_path in maps:
         cmd += ["-map", str(host), iso_path]
     cmd += ["-boot_image", "any", "replay"]
+    for number, kind, host in partitions:
+        cmd += ["-append_partition", str(number), kind, str(host)]
     return cmd
 
 
@@ -694,7 +626,8 @@ def mksquashfs_cmd(src, dst, compression, pseudo_file=None, block=None):
 
 
 def mkfs_erofs_cmd(src, dst, algorithm):
-    return ["mkfs.erofs", "-z", algorithm, "--workers=4", "--preserve-mtime", str(dst), str(src)]
+    # -C 1 MiB matches how distros build these. The default 4 KiB grows the ISO by a quarter.
+    return ["mkfs.erofs", "-z", algorithm, "-C1048576", "--workers=4", "--preserve-mtime", str(dst), str(src)]
 
 
 # --- ISO reading ------------------------------------------------------------
@@ -736,6 +669,32 @@ def image_head(iso, inner, size=4096):
         return handle.read(size)
 
 
+def appended_partitions(report):
+    """(number, type, first byte, length) from ``-report_el_torito as_mkisofs``."""
+    found = []
+    for m in re.finditer(r"^-append_partition (\d+) (\S+) --interval:local_fs:(\d+)d-(\d+)d::", report, re.M):
+        number, kind, first, last = m.groups()
+        found.append((int(number), kind, int(first) * 512, (int(last) - int(first) + 1) * 512))
+    return found
+
+
+def patch_appended_partitions(iso, work, old_label, new_label, kernel_args, timeout, hostname=""):
+    """UEFI menus often live on a FAT partition that is not in the ISO tree."""
+    report = subprocess.run(["xorriso", "-indev", str(iso), "-report_el_torito", "as_mkisofs"],
+                            capture_output=True, text=True, check=False).stdout
+    changed = []
+    for number, kind, first, length in appended_partitions(report):
+        host = work / f"partition{number}.img"
+        with open(iso, "rb") as src, open(host, "wb") as dst:
+            src.seek(first)
+            dst.write(src.read(length))
+        if _is_fat(host.read_bytes()[:512]) and _patch_fat(
+                host, old_label=old_label, new_label=new_label, kernel_args=kernel_args,
+                timeout=timeout, hostname=hostname):
+            changed.append((number, kind, host))
+    return changed
+
+
 def _maybe_text(iso, paths, inner):
     if inner not in paths and _norm(inner) not in {_norm(p) for p in paths}:
         return ""
@@ -765,7 +724,7 @@ def _primary_kind(iso, paths):
 
 
 def _read_small(iso, inner):
-    with tempfile.TemporaryDirectory(dir=SCRATCH if SCRATCH.is_dir() else None) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp) / "f"
         result = subprocess.run(
             ["xorriso", "-osirrox", "on", "-indev", str(iso), "-extract", inner, str(dest)],
@@ -802,7 +761,10 @@ def inner_build(args, scratch):
             _warn("First boot is a systemd oneshot. Images without systemd fail when the root is unpacked.")
 
         system.progress(8, "extracting root filesystem")
-        root, repack = _materialize(iso, info, scratch, mounts)
+        if (args.add_pkg or args.remove_pkg) and len(info.get("layers") or []) > 1:
+            raise SystemExit("Adding or removing packages is not supported on layered casper images "
+                             "(current Ubuntu). Overlay, hostname, first boot and kernel arguments work.")
+        root, repack = _materialize(iso, info, scratch)
         if _is_immutable_root(root):
             raise SystemExit("This live image is an immutable ostree system. Refusing to modify it.")
         if args.first_boot and not _has_systemd(root):
@@ -813,16 +775,12 @@ def inner_build(args, scratch):
         system.progress(40, "applying overlay, hostname, first boot")
         _apply_identity(root, args)
         pkg_family = _package_family(root, scratch)
-        before = _package_list(root, pkg_family) if (args.add_pkg or args.remove_pkg) else {}
         if args.add_pkg or args.remove_pkg:
             if pkg_family not in {"arch", "debian", "fedora", "suse", "alpine"}:
                 raise SystemExit(f"Don't know how to install packages for distro family '{pkg_family}'.")
             system.progress(48, "installing packages inside the live root")
             _run_packages(root, pkg_family, args.add_pkg or [], args.remove_pkg or [], mounts)
-        after = _package_list(root, pkg_family) if (args.add_pkg or args.remove_pkg) else {}
 
-        if repack.get("delta") is not None:
-            _copy_tree(repack["delta"], repack["dir"])
         _umount_children(root, mounts)
 
         system.progress(70, "repacking root filesystem")
@@ -830,28 +788,24 @@ def inner_build(args, scratch):
         changed = {repack["iso_path"]: built}
 
         system.progress(82, "updating boot entries and metadata")
-        deletes, maps = _metadata_and_boot(
-            iso, paths, scratch, info, label, args, root, changed, before, after, pkg_family)
+        deletes, maps = _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed)
+        partitions = patch_appended_partitions(iso, scratch / "meta", label, args.label or "",
+                                               list(args.kernel_arg or []), args.default_timeout, args.hostname)
         if out.exists():
             out.unlink()
         system.progress(90, "writing ISO")
-        run(xorriso_rebuild_cmd(iso, out, label=args.label or "", deletes=deletes, maps=list(maps.items())))
-        if info["family"] == "fedora":
-            if shutil.which("implantisomd5"):
-                run(["implantisomd5", str(out)])
-            else:
-                _warn("implantisomd5 is not installed, so the Fedora media checksum was not embedded. "
-                      "The 'Test this media' boot entry will report a checksum mismatch.")
+        run(xorriso_rebuild_cmd(iso, out, label=args.label or "", deletes=deletes,
+                                 maps=[(host, path) for path, host in maps.items()], partitions=partitions))
         system.progress(100, "done")
         print(f"Wrote {out}")
     finally:
         mounts.umount_all()
 
 
-def _materialize(iso, info, scratch, mounts):
+def _materialize(iso, info, scratch):
     layers = info.get("layers") or [info["squashfs"]]
     if info["family"] == "ubuntu" and len(layers) > 1:
-        return _materialize_layered(iso, layers, scratch, mounts)
+        return _materialize_layered(iso, layers, scratch)
     image = scratch / "image"
     extract_file(iso, info["squashfs"], image)
     kind = sniff_image(image.read_bytes()[:4096])
@@ -873,51 +827,28 @@ def _materialize(iso, info, scratch, mounts):
                 _unpack_erofs(inner, root2)
                 return root2, {"dir": root2, "kind": "erofs-in-squash", "outer_root": root,
                                "outer_image": image, "inner_image": inner, "iso_path": iso_path,
-                               "pseudo": pseudo, "compression": comp, "block": block, "delta": None}
+                               "pseudo": pseudo, "compression": comp, "block": block}
         return root, {"dir": root, "kind": "squashfs", "iso_path": iso_path, "pseudo": pseudo,
-                      "compression": comp, "block": block, "delta": None, "image": image}
+                      "compression": comp, "block": block, "image": image}
     if kind == "erofs":
         _unpack_erofs(image, root)
         return root, {"dir": root, "kind": "erofs", "iso_path": iso_path, "pseudo": None,
-                      "compression": _erofs_alg(image), "block": None, "delta": None, "image": image}
+                      "compression": _erofs_alg(image), "block": None, "image": image}
     raise SystemExit(f"Unrecognized root image format in {info['squashfs']} ({kind}).")
 
 
-def _materialize_layered(iso, layers, scratch, mounts):
-    """Edit the top casper layer through an overlay of the lower layers.
+def _materialize_layered(iso, layers, scratch):
+    """Edit only the top casper layer, the one the live session stacks last.
 
-    The lower squashfs files stay compressed and are mounted with squashfuse.
-    Package and file changes land in the top layer, which is the one casper
-    already uses as LAYERFS_PATH (minimal.standard.live on current Ubuntu).
+    ponytail: packages are refused here, since a package manager needs the merged
+    layers. Add squashfuse plus an overlay when someone needs them on Ubuntu.
     """
-    extracted = []
-    for index, iso_path in enumerate(layers):
-        dest = scratch / "layers" / f"{index}.squashfs"
-        extract_file(iso, iso_path, dest)
-        extracted.append(dest)
-    top_image = extracted[-1]
-    top_dir = scratch / "top"
-    pseudo, comp, block = _unpack_squash(top_image, top_dir)
-    mnt_paths = []
-    for index, image in enumerate(extracted):
-        mnt = scratch / "mnt" / str(index)
-        mnt.mkdir(parents=True)
-        run(["squashfuse", str(image), str(mnt)])
-        mounts.add(mnt)
-        mnt_paths.append(mnt)
-    delta = scratch / "delta"
-    work = scratch / "ovwork"
-    merged = scratch / "merged"
-    delta.mkdir()
-    work.mkdir()
-    merged.mkdir()
-    # First lowerdir is the highest priority (the current top layer).
-    lower = ":".join(str(p) for p in reversed(mnt_paths))
-    run(["mount", "-t", "overlay", "overlay", "-o",
-         f"lowerdir={lower},upperdir={delta},workdir={work}", str(merged)])
-    mounts.add(merged)
-    return merged, {"dir": top_dir, "kind": "squashfs", "iso_path": layers[-1], "pseudo": pseudo,
-                    "compression": comp, "block": block, "delta": delta, "image": top_image}
+    image = scratch / "top.squashfs"
+    extract_file(iso, layers[-1], image)
+    top = scratch / "top"
+    pseudo, comp, block = _unpack_squash(image, top)
+    return top, {"dir": top, "kind": "squashfs", "iso_path": layers[-1], "pseudo": pseudo,
+                 "compression": comp, "block": block, "image": image}
 
 
 def _unpack_squash(image, dest):
@@ -925,10 +856,13 @@ def _unpack_squash(image, dest):
         scrub(dest)
     dest.mkdir(parents=True)
     # Exit 2 is "non-fatal": device nodes and some xattrs cannot be created here.
-    run(["unsquashfs", "-q", "-no-progress", "-f", "-d", str(dest), str(image)], ok=(0, 2))
-    pf = run(["unsquashfs", "-pf", "-", "-q", str(image)], capture=True, ok=(0, 2))
+    # trusted.* needs real root. ponytail: this also drops overlay opaque marks, which
+    # Ubuntu 26.10's top layer does not use. Its whiteouts are device nodes and do survive.
+    run(["unsquashfs", "-q", "-no-progress", "-f", "-xattrs-exclude", r"^trusted\.",
+         "-d", str(dest), str(image)], ok=(0, 2))
+    listing = subprocess.run(["unsquashfs", "-lln", str(image)], stdout=subprocess.PIPE, errors="replace", check=False)
     comp, block = _squash_info(image)
-    return device_pseudo(pf.stdout or ""), comp, block
+    return device_pseudo(listing.stdout), comp, block
 
 
 def _unpack_erofs(image, dest):
@@ -1101,13 +1035,6 @@ def _package_family(root, scratch):
     return system.detect(copy).family
 
 
-def _package_list(root, family):
-    if family != "debian":
-        return {}
-    result = run(["chroot", str(root), "dpkg-query", "-W"], capture=True, ok=(0, 1))
-    return _parse_manifest(result.stdout or "")
-
-
 def _run_packages(root, family, add, remove, mounts):
     _mount_api(root, mounts)
     saved = _inject_resolv(root)
@@ -1238,7 +1165,7 @@ def _umount_children(root, mounts):
     mounts.points = kept
 
 
-def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed, before, after, pkg_family):
+def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
     """Return (deletes, maps) where maps is {iso path: host file}."""
     maps = {}
     work = scratch / "meta"
@@ -1261,8 +1188,8 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed, be
             continue
         data = dest.read_bytes()
         if _is_fat(data):
-            patched = _patch_fat(dest, old_label=label, new_label=new_label,
-                                 kernel_args=kernel_args, timeout=args.default_timeout)
+            patched = _patch_fat(dest, old_label=label, new_label=new_label, kernel_args=kernel_args,
+                                 timeout=args.default_timeout, hostname=args.hostname)
             if patched:
                 iso_to_host[path] = dest
             continue
@@ -1270,31 +1197,28 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed, be
             text = data.decode("utf-8", "replace")
             updated = patch_boot_text(text, old_label=label, new_label=new_label,
                                       kernel_args=kernel_args, timeout=args.default_timeout,
-                                      kind=boot_kind(path, text))
+                                      kind=boot_kind(path, text), hostname=args.hostname)
             if updated != text:
                 dest.write_text(updated)
                 iso_to_host[path] = dest
             continue
         if new_label and label and new_label != label and label.encode() in data:
-            dest.write_bytes(patch_embedded_label(data, label, new_label))
-            iso_to_host[path] = dest
+            # ponytail: a binary can't be resized safely, so this entry may not boot.
+            _warn(f"{path} embeds the old label {label!r} and was left unchanged.")
 
     primary = info["squashfs"]
     if info["family"] == "arch":
-        digest = _hash_file(built, "sha512")
-        sha_name = Path(primary).name
-        sha_iso = str(Path(primary).parent / (Path(primary).stem + ".sha512"))
-        if not sha_iso.endswith(".sha512"):
-            sha_iso = str(Path(primary).with_suffix(".sha512"))
-        # airootfs.sfs -> airootfs.sha512 (stem of the double suffix is airootfs.sfs's stem)
-        sha_iso = str(Path(primary).parent / (Path(primary).name.split(".")[0] + ".sha512"))
-        existing = [p for p in paths if p.endswith("/airootfs.sha512") and p.rsplit("/", 1)[0] == primary.rsplit("/", 1)[0]]
-        sha_iso = existing[0] if existing else sha_iso
-        sha_host = work / "airootfs.sha512"
-        sha_host.write_text(format_sha512(digest, sha_name))
-        iso_to_host[sha_iso] = sha_host
-    if info["family"] in {"ubuntu", "debian"} or primary.startswith("/casper") or "/filesystem.squashfs" in primary:
-        _write_size_and_manifest(work, root, primary, paths, before, after, pkg_family, iso_to_host, built)
+        # archiso checks `sha512sum` output against this file when asked to.
+        for sha_iso in (p for p in paths if p == str(Path(primary).parent / "airootfs.sha512")):
+            sha_host = work / "airootfs.sha512"
+            sha_host.write_text(format_sha512(_hash_file(built, "sha512"), Path(primary).name))
+            iso_to_host[sha_iso] = sha_host
+    size_path = _sibling(paths, primary, ".size")
+    if size_path:
+        # filesystem.size is the unpacked byte size casper shows while copying.
+        host = work / Path(size_path).name
+        host.write_text(run(["du", "-sx", "-B1", str(root)], capture=True).stdout.split()[0] + "\n")
+        iso_to_host[size_path] = host
     if "/md5sum.txt" in paths:
         old = _read_small(iso, "/md5sum.txt")
         updates = {}
@@ -1316,28 +1240,6 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed, be
     return deletes, iso_to_host
 
 
-def _write_size_and_manifest(work, root, primary, paths, before, after, pkg_family, iso_to_host, built):
-    size_path = _sibling(paths, primary, ".size")
-    if size_path or primary.endswith(".squashfs"):
-        size_path = size_path or (str(Path(primary).with_suffix(".size")) if primary.endswith(".squashfs") else "")
-    if size_path:
-        # filesystem.size is the unpacked byte size casper shows while copying.
-        result = run(["du", "-sx", "-B1", str(root)], capture=True)
-        host = work / Path(size_path).name
-        host.write_text(result.stdout.split()[0] + "\n")
-        iso_to_host[size_path] = host
-    if pkg_family == "debian":
-        man_path = _sibling(paths, primary, ".manifest")
-        if man_path or "/casper/filesystem.manifest" in paths or "/live/filesystem.packages" in paths:
-            if not man_path and "/casper/filesystem.manifest" in paths and primary.endswith("filesystem.squashfs"):
-                man_path = "/casper/filesystem.manifest"
-            if man_path:
-                old = _read_small(iso, man_path) if man_path in paths else ""
-                host = work / Path(man_path).name
-                host.write_text(update_manifest(old, before, after))
-                iso_to_host[man_path] = host
-
-
 def _sibling(paths, primary, suffix):
     """casper/minimal.standard.live.squashfs -> casper/minimal.standard.live.size."""
     if not primary.endswith(".squashfs") and not primary.endswith(".sfs"):
@@ -1349,7 +1251,7 @@ def _sibling(paths, primary, suffix):
     return ""
 
 
-def _patch_fat(image, *, old_label, new_label, kernel_args, timeout):
+def _patch_fat(image, *, old_label, new_label, kernel_args, timeout, hostname=""):
     env = os.environ.copy()
     env["MTOOLS_SKIP_CHECK"] = "1"
     listed = subprocess.run(["mdir", "-i", str(image), "-s", "-b", "::"], capture_output=True, text=True, env=env)
@@ -1375,7 +1277,7 @@ def _patch_fat(image, *, old_label, new_label, kernel_args, timeout):
             text = raw.decode("utf-8", "replace")
             updated = patch_boot_text(text, old_label=old_label, new_label=new_label,
                                       kernel_args=kernel_args, timeout=timeout,
-                                      kind=boot_kind(inner, text))
+                                      kind=boot_kind(inner, text), hostname=hostname)
             if updated == text:
                 continue
             local.write_text(updated)
@@ -1403,25 +1305,7 @@ def _hash_file(path, kind):
 
 def _copy_tree(src, dst):
     dst.mkdir(parents=True, exist_ok=True)
-    result = run(["cp", "-a", str(src) + "/.", str(dst) + "/"], ok=(0, 1))
-    if result.returncode == 0:
-        return
-    for dirpath, dirnames, filenames in os.walk(src):
-        rel = Path(dirpath).relative_to(src)
-        target = dst / rel
-        target.mkdir(parents=True, exist_ok=True)
-        for name in filenames:
-            source = Path(dirpath) / name
-            if source.is_symlink():
-                link = target / name
-                if link.is_symlink() or link.exists():
-                    link.unlink()
-                link.symlink_to(os.readlink(source))
-                continue
-            mode = source.lstat().st_mode
-            if stat.S_ISCHR(mode) or stat.S_ISBLK(mode) or stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
-                continue
-            shutil.copy2(source, target / name)
+    run(["cp", "-a", str(src) + "/.", str(dst) + "/"])
 
 
 class _Mounts:
@@ -1434,7 +1318,6 @@ class _Mounts:
     def umount_all(self):
         for point in reversed(self.points):
             subprocess.run(["umount", "-l", str(point)], check=False)
-            subprocess.run(["fusermount", "-uz", str(point)], check=False)
         self.points.clear()
 
 

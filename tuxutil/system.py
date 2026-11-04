@@ -132,6 +132,8 @@ def as_root(cmd):
         return ["sudo", *cmd]
     if shutil.which("doas"):
         return ["doas", *cmd]
+    if DRY_RUN:
+        return list(cmd)
     raise SystemExit("Need root but found no pkexec, sudo or doas.")
 
 
@@ -143,6 +145,15 @@ def run(cmd, *, check=True, capture=False, **kwargs):
     if capture:
         kwargs.update(stdout=subprocess.PIPE, text=True)
     return subprocess.run([str(c) for c in cmd], check=check, **kwargs)
+
+
+def query(cmd, timeout=15):
+    """Run a read-only command and return its result. Never dry-runs and never raises."""
+    try:
+        return subprocess.run([str(c) for c in cmd], capture_output=True, text=True,
+                              check=False, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return subprocess.CompletedProcess(list(cmd), 127, "", "")
 
 
 def progress(percent, message=""):

@@ -1,0 +1,1836 @@
+[
+  {
+    "id": "firefox",
+    "name": "Firefox",
+    "category": "browsers",
+    "description": "Mozilla Firefox. Debian and Ubuntu get firefox-esr, a real deb rather than Ubuntu's snap wrapper.",
+    "packages": {
+      "arch": [
+        "firefox"
+      ],
+      "debian": [
+        "firefox-esr"
+      ],
+      "fedora": [
+        "firefox"
+      ],
+      "suse": [
+        "MozillaFirefox"
+      ]
+    },
+    "flatpak": "org.mozilla.firefox"
+  },
+  {
+    "id": "chromium",
+    "name": "Chromium",
+    "category": "browsers",
+    "description": "Chromium browser. Ubuntu does not ship this deb (it is a snap there); Debian, Fedora, and openSUSE do.",
+    "packages": {
+      "arch": [
+        "chromium"
+      ],
+      "debian": [
+        "chromium"
+      ],
+      "fedora": [
+        "chromium"
+      ],
+      "suse": [
+        "chromium"
+      ]
+    },
+    "flatpak": "org.chromium.Chromium"
+  },
+  {
+    "id": "librewolf",
+    "name": "LibreWolf",
+    "category": "browsers",
+    "description": "Firefox fork with telemetry removed. Official Arch package; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "librewolf"
+      ]
+    },
+    "flatpak": "io.gitlab.librewolf-community"
+  },
+  {
+    "id": "tor-browser",
+    "name": "Tor Browser",
+    "category": "browsers",
+    "description": "Tor Browser launcher, which downloads the official Tor Browser bundle.",
+    "packages": {
+      "arch": [
+        "torbrowser-launcher"
+      ],
+      "debian": [
+        "torbrowser-launcher"
+      ],
+      "fedora": [
+        "torbrowser-launcher"
+      ],
+      "suse": [
+        "torbrowser-launcher"
+      ]
+    },
+    "flatpak": "org.torproject.torbrowser-launcher"
+  },
+  {
+    "id": "brave",
+    "name": "Brave",
+    "category": "browsers",
+    "description": "Brave browser. Not in the default distro repositories; installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.brave.Browser"
+  },
+  {
+    "id": "google-chrome",
+    "name": "Google Chrome",
+    "category": "browsers",
+    "description": "Google Chrome. Not in the default distro repositories; installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.google.Chrome"
+  },
+  {
+    "id": "vivaldi",
+    "name": "Vivaldi",
+    "category": "browsers",
+    "description": "Vivaldi browser. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "vivaldi"
+      ]
+    },
+    "flatpak": "com.vivaldi.Vivaldi"
+  },
+  {
+    "id": "gnome-web",
+    "name": "GNOME Web",
+    "category": "browsers",
+    "description": "GNOME Web, also called Epiphany.",
+    "packages": {
+      "arch": [
+        "epiphany"
+      ],
+      "debian": [
+        "epiphany-browser"
+      ],
+      "fedora": [
+        "epiphany"
+      ],
+      "suse": [
+        "epiphany"
+      ]
+    },
+    "flatpak": "org.gnome.Epiphany"
+  },
+  {
+    "id": "falkon",
+    "name": "Falkon",
+    "category": "browsers",
+    "description": "KDE's Falkon browser.",
+    "packages": {
+      "arch": [
+        "falkon"
+      ],
+      "debian": [
+        "falkon"
+      ],
+      "fedora": [
+        "falkon"
+      ],
+      "suse": [
+        "falkon"
+      ]
+    },
+    "flatpak": "org.kde.falkon"
+  },
+  {
+    "id": "qutebrowser",
+    "name": "qutebrowser",
+    "category": "browsers",
+    "description": "Keyboard-driven browser with vim-like bindings.",
+    "packages": {
+      "arch": [
+        "qutebrowser"
+      ],
+      "debian": [
+        "qutebrowser"
+      ],
+      "fedora": [
+        "qutebrowser"
+      ],
+      "suse": [
+        "qutebrowser"
+      ]
+    },
+    "flatpak": "org.qutebrowser.qutebrowser"
+  },
+  {
+    "id": "git",
+    "name": "Git",
+    "category": "dev",
+    "description": "Git version control.",
+    "packages": {
+      "arch": [
+        "git"
+      ],
+      "debian": [
+        "git"
+      ],
+      "fedora": [
+        "git"
+      ],
+      "suse": [
+        "git"
+      ]
+    }
+  },
+  {
+    "id": "neovim",
+    "name": "Neovim",
+    "category": "dev",
+    "description": "Neovim text editor.",
+    "packages": {
+      "arch": [
+        "neovim"
+      ],
+      "debian": [
+        "neovim"
+      ],
+      "fedora": [
+        "neovim"
+      ],
+      "suse": [
+        "neovim"
+      ]
+    },
+    "flatpak": "io.neovim.nvim"
+  },
+  {
+    "id": "vim",
+    "name": "Vim",
+    "category": "dev",
+    "description": "Vim text editor. Fedora's package is vim-enhanced.",
+    "packages": {
+      "arch": [
+        "vim"
+      ],
+      "debian": [
+        "vim"
+      ],
+      "fedora": [
+        "vim-enhanced"
+      ],
+      "suse": [
+        "vim"
+      ]
+    }
+  },
+  {
+    "id": "emacs",
+    "name": "Emacs",
+    "category": "dev",
+    "description": "GNU Emacs.",
+    "packages": {
+      "arch": [
+        "emacs"
+      ],
+      "debian": [
+        "emacs"
+      ],
+      "fedora": [
+        "emacs"
+      ],
+      "suse": [
+        "emacs"
+      ]
+    },
+    "flatpak": "org.gnu.emacs"
+  },
+  {
+    "id": "vscode",
+    "name": "Visual Studio Code",
+    "category": "dev",
+    "description": "Microsoft Visual Studio Code. Arch packages it as code; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "code"
+      ]
+    },
+    "flatpak": "com.visualstudio.code"
+  },
+  {
+    "id": "vscodium",
+    "name": "VSCodium",
+    "category": "dev",
+    "description": "VS Code without Microsoft branding or telemetry. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.vscodium.codium"
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "category": "dev",
+    "description": "Docker engine and CLI. Fedora's packages are moby-engine and docker-cli; Debian's is docker.io.",
+    "packages": {
+      "arch": [
+        "docker"
+      ],
+      "debian": [
+        "docker.io"
+      ],
+      "fedora": [
+        "moby-engine",
+        "docker-cli"
+      ],
+      "suse": [
+        "docker"
+      ]
+    }
+  },
+  {
+    "id": "podman",
+    "name": "Podman",
+    "category": "dev",
+    "description": "Daemonless container engine.",
+    "packages": {
+      "arch": [
+        "podman"
+      ],
+      "debian": [
+        "podman"
+      ],
+      "fedora": [
+        "podman"
+      ],
+      "suse": [
+        "podman"
+      ]
+    }
+  },
+  {
+    "id": "github-cli",
+    "name": "GitHub CLI",
+    "category": "dev",
+    "description": "GitHub's gh command. Arch calls the package github-cli.",
+    "packages": {
+      "arch": [
+        "github-cli"
+      ],
+      "debian": [
+        "gh"
+      ],
+      "fedora": [
+        "gh"
+      ],
+      "suse": [
+        "gh"
+      ]
+    }
+  },
+  {
+    "id": "nodejs",
+    "name": "Node.js",
+    "category": "dev",
+    "description": "Node.js runtime. openSUSE Factory currently ships it as nodejs24.",
+    "packages": {
+      "arch": [
+        "nodejs"
+      ],
+      "debian": [
+        "nodejs"
+      ],
+      "fedora": [
+        "nodejs"
+      ],
+      "suse": [
+        "nodejs24"
+      ]
+    }
+  },
+  {
+    "id": "python",
+    "name": "Python",
+    "category": "dev",
+    "description": "The distro Python 3 interpreter. openSUSE Factory ships python313.",
+    "packages": {
+      "arch": [
+        "python"
+      ],
+      "debian": [
+        "python3"
+      ],
+      "fedora": [
+        "python3"
+      ],
+      "suse": [
+        "python313"
+      ]
+    }
+  },
+  {
+    "id": "rust",
+    "name": "Rust",
+    "category": "dev",
+    "description": "Rust compiler. Debian also installs cargo; the other packages include it.",
+    "packages": {
+      "arch": [
+        "rust"
+      ],
+      "debian": [
+        "rustc",
+        "cargo"
+      ],
+      "fedora": [
+        "rust",
+        "cargo"
+      ],
+      "suse": [
+        "rust"
+      ]
+    }
+  },
+  {
+    "id": "go",
+    "name": "Go",
+    "category": "dev",
+    "description": "Go compiler and tools.",
+    "packages": {
+      "arch": [
+        "go"
+      ],
+      "debian": [
+        "golang-go"
+      ],
+      "fedora": [
+        "golang"
+      ],
+      "suse": [
+        "go"
+      ]
+    }
+  },
+  {
+    "id": "build-essential",
+    "name": "Build tools",
+    "category": "dev",
+    "description": "Compiler toolchain used to build C and C++ software. Arch installs the base-devel package.",
+    "packages": {
+      "arch": [
+        "base-devel"
+      ],
+      "debian": [
+        "build-essential"
+      ],
+      "fedora": [
+        "gcc",
+        "make",
+        "binutils"
+      ],
+      "suse": [
+        "gcc",
+        "make",
+        "binutils"
+      ]
+    }
+  },
+  {
+    "id": "tmux",
+    "name": "tmux",
+    "category": "dev",
+    "description": "Terminal multiplexer.",
+    "packages": {
+      "arch": [
+        "tmux"
+      ],
+      "debian": [
+        "tmux"
+      ],
+      "fedora": [
+        "tmux"
+      ],
+      "suse": [
+        "tmux"
+      ]
+    }
+  },
+  {
+    "id": "steam",
+    "name": "Steam",
+    "category": "gaming",
+    "description": "Steam. The amd64 Debian and Ubuntu package is steam-installer. Fedora and openSUSE use Flathub.",
+    "packages": {
+      "arch": [
+        "steam"
+      ],
+      "debian": [
+        "steam-installer"
+      ]
+    },
+    "flatpak": "com.valvesoftware.Steam"
+  },
+  {
+    "id": "lutris",
+    "name": "Lutris",
+    "category": "gaming",
+    "description": "Game manager for Wine, emulators, and stores.",
+    "packages": {
+      "arch": [
+        "lutris"
+      ],
+      "debian": [
+        "lutris"
+      ],
+      "fedora": [
+        "lutris"
+      ],
+      "suse": [
+        "lutris"
+      ]
+    },
+    "flatpak": "net.lutris.Lutris"
+  },
+  {
+    "id": "heroic",
+    "name": "Heroic Games Launcher",
+    "category": "gaming",
+    "description": "Launcher for Epic, GOG, and Amazon games. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.heroicgameslauncher.hgl"
+  },
+  {
+    "id": "mangohud",
+    "name": "MangoHud",
+    "category": "gaming",
+    "description": "Vulkan and OpenGL framerate overlay.",
+    "packages": {
+      "arch": [
+        "mangohud"
+      ],
+      "debian": [
+        "mangohud"
+      ],
+      "fedora": [
+        "mangohud"
+      ],
+      "suse": [
+        "mangohud"
+      ]
+    }
+  },
+  {
+    "id": "gamemode",
+    "name": "GameMode",
+    "category": "gaming",
+    "description": "Feral Interactive's GameMode performance daemon.",
+    "packages": {
+      "arch": [
+        "gamemode"
+      ],
+      "debian": [
+        "gamemode"
+      ],
+      "fedora": [
+        "gamemode"
+      ],
+      "suse": [
+        "gamemode"
+      ]
+    }
+  },
+  {
+    "id": "wine",
+    "name": "Wine",
+    "category": "gaming",
+    "description": "Wine compatibility layer for Windows programs.",
+    "packages": {
+      "arch": [
+        "wine"
+      ],
+      "debian": [
+        "wine"
+      ],
+      "fedora": [
+        "wine"
+      ],
+      "suse": [
+        "wine"
+      ]
+    }
+  },
+  {
+    "id": "retroarch",
+    "name": "RetroArch",
+    "category": "gaming",
+    "description": "Libretro frontend.",
+    "packages": {
+      "arch": [
+        "retroarch"
+      ],
+      "debian": [
+        "retroarch"
+      ],
+      "fedora": [
+        "retroarch"
+      ],
+      "suse": [
+        "retroarch"
+      ]
+    },
+    "flatpak": "org.libretro.RetroArch"
+  },
+  {
+    "id": "prism-launcher",
+    "name": "Prism Launcher",
+    "category": "gaming",
+    "description": "Minecraft launcher. Fedora uses the Flathub build.",
+    "packages": {
+      "arch": [
+        "prismlauncher"
+      ],
+      "debian": [
+        "prismlauncher"
+      ],
+      "suse": [
+        "prismlauncher"
+      ]
+    },
+    "flatpak": "org.prismlauncher.PrismLauncher"
+  },
+  {
+    "id": "bottles",
+    "name": "Bottles",
+    "category": "gaming",
+    "description": "Wine prefix manager. Fedora packages it; other distros use the Flathub build.",
+    "packages": {
+      "fedora": [
+        "bottles"
+      ]
+    },
+    "flatpak": "com.usebottles.bottles"
+  },
+  {
+    "id": "gamescope",
+    "name": "Gamescope",
+    "category": "gaming",
+    "description": "Valve's micro-compositor for games.",
+    "packages": {
+      "arch": [
+        "gamescope"
+      ],
+      "debian": [
+        "gamescope"
+      ],
+      "fedora": [
+        "gamescope"
+      ],
+      "suse": [
+        "gamescope"
+      ]
+    }
+  },
+  {
+    "id": "vlc",
+    "name": "VLC",
+    "category": "media",
+    "description": "VLC media player.",
+    "packages": {
+      "arch": [
+        "vlc"
+      ],
+      "debian": [
+        "vlc"
+      ],
+      "fedora": [
+        "vlc"
+      ],
+      "suse": [
+        "vlc"
+      ]
+    },
+    "flatpak": "org.videolan.VLC"
+  },
+  {
+    "id": "mpv",
+    "name": "mpv",
+    "category": "media",
+    "description": "mpv media player.",
+    "packages": {
+      "arch": [
+        "mpv"
+      ],
+      "debian": [
+        "mpv"
+      ],
+      "fedora": [
+        "mpv"
+      ],
+      "suse": [
+        "mpv"
+      ]
+    },
+    "flatpak": "io.mpv.Mpv"
+  },
+  {
+    "id": "obs-studio",
+    "name": "OBS Studio",
+    "category": "media",
+    "description": "OBS Studio screen recorder.",
+    "packages": {
+      "arch": [
+        "obs-studio"
+      ],
+      "debian": [
+        "obs-studio"
+      ],
+      "fedora": [
+        "obs-studio"
+      ],
+      "suse": [
+        "obs-studio"
+      ]
+    },
+    "flatpak": "com.obsproject.Studio"
+  },
+  {
+    "id": "audacity",
+    "name": "Audacity",
+    "category": "media",
+    "description": "Audacity audio editor.",
+    "packages": {
+      "arch": [
+        "audacity"
+      ],
+      "debian": [
+        "audacity"
+      ],
+      "fedora": [
+        "audacity"
+      ],
+      "suse": [
+        "audacity"
+      ]
+    },
+    "flatpak": "org.audacityteam.Audacity"
+  },
+  {
+    "id": "gimp",
+    "name": "GIMP",
+    "category": "media",
+    "description": "GIMP image editor.",
+    "packages": {
+      "arch": [
+        "gimp"
+      ],
+      "debian": [
+        "gimp"
+      ],
+      "fedora": [
+        "gimp"
+      ],
+      "suse": [
+        "gimp"
+      ]
+    },
+    "flatpak": "org.gimp.GIMP"
+  },
+  {
+    "id": "inkscape",
+    "name": "Inkscape",
+    "category": "media",
+    "description": "Inkscape vector editor.",
+    "packages": {
+      "arch": [
+        "inkscape"
+      ],
+      "debian": [
+        "inkscape"
+      ],
+      "fedora": [
+        "inkscape"
+      ],
+      "suse": [
+        "inkscape"
+      ]
+    },
+    "flatpak": "org.inkscape.Inkscape"
+  },
+  {
+    "id": "krita",
+    "name": "Krita",
+    "category": "media",
+    "description": "Krita painting program.",
+    "packages": {
+      "arch": [
+        "krita"
+      ],
+      "debian": [
+        "krita"
+      ],
+      "fedora": [
+        "krita"
+      ],
+      "suse": [
+        "krita"
+      ]
+    },
+    "flatpak": "org.kde.krita"
+  },
+  {
+    "id": "blender",
+    "name": "Blender",
+    "category": "media",
+    "description": "Blender 3D suite.",
+    "packages": {
+      "arch": [
+        "blender"
+      ],
+      "debian": [
+        "blender"
+      ],
+      "fedora": [
+        "blender"
+      ],
+      "suse": [
+        "blender"
+      ]
+    },
+    "flatpak": "org.blender.Blender"
+  },
+  {
+    "id": "kdenlive",
+    "name": "Kdenlive",
+    "category": "media",
+    "description": "Kdenlive video editor.",
+    "packages": {
+      "arch": [
+        "kdenlive"
+      ],
+      "debian": [
+        "kdenlive"
+      ],
+      "fedora": [
+        "kdenlive"
+      ],
+      "suse": [
+        "kdenlive"
+      ]
+    },
+    "flatpak": "org.kde.kdenlive"
+  },
+  {
+    "id": "handbrake",
+    "name": "HandBrake",
+    "category": "media",
+    "description": "HandBrake video transcoder. Fedora and openSUSE use the Flathub build.",
+    "packages": {
+      "arch": [
+        "handbrake"
+      ],
+      "debian": [
+        "handbrake"
+      ]
+    },
+    "flatpak": "fr.handbrake.ghb"
+  },
+  {
+    "id": "strawberry",
+    "name": "Strawberry",
+    "category": "media",
+    "description": "Strawberry music player.",
+    "packages": {
+      "arch": [
+        "strawberry"
+      ],
+      "debian": [
+        "strawberry"
+      ],
+      "fedora": [
+        "strawberry"
+      ],
+      "suse": [
+        "strawberry"
+      ]
+    },
+    "flatpak": "org.strawberrymusicplayer.strawberry"
+  },
+  {
+    "id": "ffmpeg",
+    "name": "FFmpeg",
+    "category": "media",
+    "description": "FFmpeg. Fedora's official build is the limited ffmpeg-free package; openSUSE ships ffmpeg-7.",
+    "packages": {
+      "arch": [
+        "ffmpeg"
+      ],
+      "debian": [
+        "ffmpeg"
+      ],
+      "fedora": [
+        "ffmpeg-free"
+      ],
+      "suse": [
+        "ffmpeg-7"
+      ]
+    }
+  },
+  {
+    "id": "yt-dlp",
+    "name": "yt-dlp",
+    "category": "media",
+    "description": "yt-dlp video downloader.",
+    "packages": {
+      "arch": [
+        "yt-dlp"
+      ],
+      "debian": [
+        "yt-dlp"
+      ],
+      "fedora": [
+        "yt-dlp"
+      ],
+      "suse": [
+        "yt-dlp"
+      ]
+    }
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "category": "media",
+    "description": "Spotify client. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.spotify.Client"
+  },
+  {
+    "id": "libreoffice",
+    "name": "LibreOffice",
+    "category": "office",
+    "description": "LibreOffice. Arch tracks the fresh branch.",
+    "packages": {
+      "arch": [
+        "libreoffice-fresh"
+      ],
+      "debian": [
+        "libreoffice"
+      ],
+      "fedora": [
+        "libreoffice"
+      ],
+      "suse": [
+        "libreoffice"
+      ]
+    },
+    "flatpak": "org.libreoffice.LibreOffice"
+  },
+  {
+    "id": "thunderbird",
+    "name": "Thunderbird",
+    "category": "office",
+    "description": "Thunderbird mail client.",
+    "packages": {
+      "arch": [
+        "thunderbird"
+      ],
+      "debian": [
+        "thunderbird"
+      ],
+      "fedora": [
+        "thunderbird"
+      ],
+      "suse": [
+        "MozillaThunderbird"
+      ]
+    },
+    "flatpak": "org.mozilla.Thunderbird"
+  },
+  {
+    "id": "onlyoffice",
+    "name": "ONLYOFFICE",
+    "category": "office",
+    "description": "ONLYOFFICE desktop editors. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "org.onlyoffice.desktopeditors"
+  },
+  {
+    "id": "evince",
+    "name": "Evince",
+    "category": "office",
+    "description": "GNOME document viewer.",
+    "packages": {
+      "arch": [
+        "evince"
+      ],
+      "debian": [
+        "evince"
+      ],
+      "fedora": [
+        "evince"
+      ],
+      "suse": [
+        "evince"
+      ]
+    },
+    "flatpak": "org.gnome.Evince"
+  },
+  {
+    "id": "foliate",
+    "name": "Foliate",
+    "category": "office",
+    "description": "Foliate ebook reader.",
+    "packages": {
+      "arch": [
+        "foliate"
+      ],
+      "debian": [
+        "foliate"
+      ],
+      "fedora": [
+        "foliate"
+      ],
+      "suse": [
+        "foliate"
+      ]
+    },
+    "flatpak": "com.github.johnfactotum.Foliate"
+  },
+  {
+    "id": "obsidian",
+    "name": "Obsidian",
+    "category": "office",
+    "description": "Obsidian notes. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "obsidian"
+      ]
+    },
+    "flatpak": "md.obsidian.Obsidian"
+  },
+  {
+    "id": "calibre",
+    "name": "Calibre",
+    "category": "office",
+    "description": "Calibre ebook manager.",
+    "packages": {
+      "arch": [
+        "calibre"
+      ],
+      "debian": [
+        "calibre"
+      ],
+      "fedora": [
+        "calibre"
+      ],
+      "suse": [
+        "calibre"
+      ]
+    },
+    "flatpak": "com.calibre_ebook.calibre"
+  },
+  {
+    "id": "gnome-calculator",
+    "name": "Calculator",
+    "category": "office",
+    "description": "GNOME Calculator.",
+    "packages": {
+      "arch": [
+        "gnome-calculator"
+      ],
+      "debian": [
+        "gnome-calculator"
+      ],
+      "fedora": [
+        "gnome-calculator"
+      ],
+      "suse": [
+        "gnome-calculator"
+      ]
+    },
+    "flatpak": "org.gnome.Calculator"
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "category": "chat",
+    "description": "Discord. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "discord"
+      ]
+    },
+    "flatpak": "com.discordapp.Discord"
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram",
+    "category": "chat",
+    "description": "Telegram Desktop. Fedora uses the Flathub build.",
+    "packages": {
+      "arch": [
+        "telegram-desktop"
+      ],
+      "debian": [
+        "telegram-desktop"
+      ],
+      "suse": [
+        "telegram-desktop"
+      ]
+    },
+    "flatpak": "org.telegram.desktop"
+  },
+  {
+    "id": "signal",
+    "name": "Signal",
+    "category": "chat",
+    "description": "Signal Desktop. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "signal-desktop"
+      ]
+    },
+    "flatpak": "org.signal.Signal"
+  },
+  {
+    "id": "element",
+    "name": "Element",
+    "category": "chat",
+    "description": "Element Matrix client. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "element-desktop"
+      ]
+    },
+    "flatpak": "im.riot.Riot"
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "category": "chat",
+    "description": "Slack. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "com.slack.Slack"
+  },
+  {
+    "id": "zoom",
+    "name": "Zoom",
+    "category": "chat",
+    "description": "Zoom. Installed from Flathub.",
+    "packages": {},
+    "flatpak": "us.zoom.Zoom"
+  },
+  {
+    "id": "dino",
+    "name": "Dino",
+    "category": "chat",
+    "description": "Dino XMPP client. Debian's package is dino-im.",
+    "packages": {
+      "arch": [
+        "dino"
+      ],
+      "debian": [
+        "dino-im"
+      ],
+      "fedora": [
+        "dino"
+      ],
+      "suse": [
+        "dino"
+      ]
+    },
+    "flatpak": "im.dino.Dino"
+  },
+  {
+    "id": "mattermost",
+    "name": "Mattermost",
+    "category": "chat",
+    "description": "Mattermost desktop. Packaged in Arch extra; other distros use the Flathub build.",
+    "packages": {
+      "arch": [
+        "mattermost-desktop"
+      ]
+    },
+    "flatpak": "com.mattermost.Desktop"
+  },
+  {
+    "id": "fastfetch",
+    "name": "fastfetch",
+    "category": "utilities",
+    "description": "fastfetch system information.",
+    "packages": {
+      "arch": [
+        "fastfetch"
+      ],
+      "debian": [
+        "fastfetch"
+      ],
+      "fedora": [
+        "fastfetch"
+      ],
+      "suse": [
+        "fastfetch"
+      ]
+    }
+  },
+  {
+    "id": "btop",
+    "name": "btop",
+    "category": "utilities",
+    "description": "btop resource monitor.",
+    "packages": {
+      "arch": [
+        "btop"
+      ],
+      "debian": [
+        "btop"
+      ],
+      "fedora": [
+        "btop"
+      ],
+      "suse": [
+        "btop"
+      ]
+    }
+  },
+  {
+    "id": "htop",
+    "name": "htop",
+    "category": "utilities",
+    "description": "htop process viewer.",
+    "packages": {
+      "arch": [
+        "htop"
+      ],
+      "debian": [
+        "htop"
+      ],
+      "fedora": [
+        "htop"
+      ],
+      "suse": [
+        "htop"
+      ]
+    }
+  },
+  {
+    "id": "filezilla",
+    "name": "FileZilla",
+    "category": "utilities",
+    "description": "FileZilla FTP client.",
+    "packages": {
+      "arch": [
+        "filezilla"
+      ],
+      "debian": [
+        "filezilla"
+      ],
+      "fedora": [
+        "filezilla"
+      ],
+      "suse": [
+        "filezilla"
+      ]
+    },
+    "flatpak": "org.filezillaproject.Filezilla"
+  },
+  {
+    "id": "keepassxc",
+    "name": "KeePassXC",
+    "category": "utilities",
+    "description": "KeePassXC password manager.",
+    "packages": {
+      "arch": [
+        "keepassxc"
+      ],
+      "debian": [
+        "keepassxc"
+      ],
+      "fedora": [
+        "keepassxc"
+      ],
+      "suse": [
+        "keepassxc"
+      ]
+    },
+    "flatpak": "org.keepassxc.KeePassXC"
+  },
+  {
+    "id": "syncthing",
+    "name": "Syncthing",
+    "category": "utilities",
+    "description": "Syncthing file synchronization.",
+    "packages": {
+      "arch": [
+        "syncthing"
+      ],
+      "debian": [
+        "syncthing"
+      ],
+      "fedora": [
+        "syncthing"
+      ],
+      "suse": [
+        "syncthing"
+      ]
+    }
+  },
+  {
+    "id": "gparted",
+    "name": "GParted",
+    "category": "utilities",
+    "description": "GParted partition editor.",
+    "packages": {
+      "arch": [
+        "gparted"
+      ],
+      "debian": [
+        "gparted"
+      ],
+      "fedora": [
+        "gparted"
+      ],
+      "suse": [
+        "gparted"
+      ]
+    }
+  },
+  {
+    "id": "meld",
+    "name": "Meld",
+    "category": "utilities",
+    "description": "Meld visual diff and merge tool.",
+    "packages": {
+      "arch": [
+        "meld"
+      ],
+      "debian": [
+        "meld"
+      ],
+      "fedora": [
+        "meld"
+      ],
+      "suse": [
+        "meld"
+      ]
+    },
+    "flatpak": "org.gnome.meld"
+  },
+  {
+    "id": "flameshot",
+    "name": "Flameshot",
+    "category": "utilities",
+    "description": "Flameshot screenshot tool.",
+    "packages": {
+      "arch": [
+        "flameshot"
+      ],
+      "debian": [
+        "flameshot"
+      ],
+      "fedora": [
+        "flameshot"
+      ],
+      "suse": [
+        "flameshot"
+      ]
+    },
+    "flatpak": "org.flameshot.Flameshot"
+  },
+  {
+    "id": "sevenzip",
+    "name": "7-Zip",
+    "category": "utilities",
+    "description": "7-Zip archiver (the 7zip package).",
+    "packages": {
+      "arch": [
+        "7zip"
+      ],
+      "debian": [
+        "7zip"
+      ],
+      "fedora": [
+        "7zip"
+      ],
+      "suse": [
+        "7zip"
+      ]
+    }
+  },
+  {
+    "id": "timeshift",
+    "name": "Timeshift",
+    "category": "utilities",
+    "description": "Timeshift system restore snapshots.",
+    "packages": {
+      "arch": [
+        "timeshift"
+      ],
+      "debian": [
+        "timeshift"
+      ],
+      "fedora": [
+        "timeshift"
+      ],
+      "suse": [
+        "timeshift"
+      ]
+    }
+  },
+  {
+    "id": "baobab",
+    "name": "Disk Usage Analyzer",
+    "category": "utilities",
+    "description": "GNOME Disk Usage Analyzer.",
+    "packages": {
+      "arch": [
+        "baobab"
+      ],
+      "debian": [
+        "baobab"
+      ],
+      "fedora": [
+        "baobab"
+      ],
+      "suse": [
+        "baobab"
+      ]
+    },
+    "flatpak": "org.gnome.baobab"
+  },
+  {
+    "id": "qbittorrent",
+    "name": "qBittorrent",
+    "category": "utilities",
+    "description": "qBittorrent client.",
+    "packages": {
+      "arch": [
+        "qbittorrent"
+      ],
+      "debian": [
+        "qbittorrent"
+      ],
+      "fedora": [
+        "qbittorrent"
+      ],
+      "suse": [
+        "qbittorrent"
+      ]
+    },
+    "flatpak": "org.qbittorrent.qBittorrent"
+  },
+  {
+    "id": "nextcloud",
+    "name": "Nextcloud",
+    "category": "utilities",
+    "description": "Nextcloud desktop client.",
+    "packages": {
+      "arch": [
+        "nextcloud-client"
+      ],
+      "debian": [
+        "nextcloud-desktop"
+      ],
+      "fedora": [
+        "nextcloud-client"
+      ],
+      "suse": [
+        "nextcloud-desktop"
+      ]
+    },
+    "flatpak": "com.nextcloud.desktopclient.nextcloud"
+  },
+  {
+    "id": "gnome-disks",
+    "name": "GNOME Disks",
+    "category": "utilities",
+    "description": "GNOME disk utility.",
+    "packages": {
+      "arch": [
+        "gnome-disk-utility"
+      ],
+      "debian": [
+        "gnome-disk-utility"
+      ],
+      "fedora": [
+        "gnome-disk-utility"
+      ],
+      "suse": [
+        "gnome-disk-utility"
+      ]
+    }
+  },
+  {
+    "id": "wget",
+    "name": "GNU Wget",
+    "category": "utilities",
+    "description": "GNU Wget. Fedora rawhide replaced wget with wget2.",
+    "packages": {
+      "arch": [
+        "wget"
+      ],
+      "debian": [
+        "wget"
+      ],
+      "fedora": [
+        "wget2"
+      ],
+      "suse": [
+        "wget"
+      ]
+    }
+  },
+  {
+    "id": "ufw",
+    "name": "UFW",
+    "category": "security",
+    "description": "Uncomplicated Firewall.",
+    "packages": {
+      "arch": [
+        "ufw"
+      ],
+      "debian": [
+        "ufw"
+      ],
+      "fedora": [
+        "ufw"
+      ],
+      "suse": [
+        "ufw"
+      ]
+    }
+  },
+  {
+    "id": "firewalld",
+    "name": "firewalld",
+    "category": "security",
+    "description": "firewalld firewall daemon.",
+    "packages": {
+      "arch": [
+        "firewalld"
+      ],
+      "debian": [
+        "firewalld"
+      ],
+      "fedora": [
+        "firewalld"
+      ],
+      "suse": [
+        "firewalld"
+      ]
+    }
+  },
+  {
+    "id": "clamav",
+    "name": "ClamAV",
+    "category": "security",
+    "description": "ClamAV antivirus scanner.",
+    "packages": {
+      "arch": [
+        "clamav"
+      ],
+      "debian": [
+        "clamav"
+      ],
+      "fedora": [
+        "clamav"
+      ],
+      "suse": [
+        "clamav"
+      ]
+    }
+  },
+  {
+    "id": "gnupg",
+    "name": "GnuPG",
+    "category": "security",
+    "description": "GnuPG. Fedora's package is gnupg2; openSUSE's is gpg2.",
+    "packages": {
+      "arch": [
+        "gnupg"
+      ],
+      "debian": [
+        "gnupg"
+      ],
+      "fedora": [
+        "gnupg2"
+      ],
+      "suse": [
+        "gpg2"
+      ]
+    }
+  },
+  {
+    "id": "firejail",
+    "name": "Firejail",
+    "category": "security",
+    "description": "Firejail sandbox for untrusted programs.",
+    "packages": {
+      "arch": [
+        "firejail"
+      ],
+      "debian": [
+        "firejail"
+      ],
+      "fedora": [
+        "firejail"
+      ],
+      "suse": [
+        "firejail"
+      ]
+    }
+  },
+  {
+    "id": "tor",
+    "name": "Tor",
+    "category": "security",
+    "description": "Tor onion router daemon.",
+    "packages": {
+      "arch": [
+        "tor"
+      ],
+      "debian": [
+        "tor"
+      ],
+      "fedora": [
+        "tor"
+      ],
+      "suse": [
+        "tor"
+      ]
+    }
+  },
+  {
+    "id": "bitwarden",
+    "name": "Bitwarden",
+    "category": "security",
+    "description": "Bitwarden desktop. Arch and openSUSE package it; Debian and Fedora use Flathub.",
+    "packages": {
+      "arch": [
+        "bitwarden"
+      ],
+      "suse": [
+        "bitwarden"
+      ]
+    },
+    "flatpak": "com.bitwarden.desktop"
+  },
+  {
+    "id": "wireshark",
+    "name": "Wireshark",
+    "category": "security",
+    "description": "Wireshark packet analyzer. Arch installs the Qt GUI package.",
+    "packages": {
+      "arch": [
+        "wireshark-qt"
+      ],
+      "debian": [
+        "wireshark"
+      ],
+      "fedora": [
+        "wireshark"
+      ],
+      "suse": [
+        "wireshark"
+      ]
+    }
+  },
+  {
+    "id": "openssh",
+    "name": "OpenSSH",
+    "category": "security",
+    "description": "OpenSSH client. Fedora's package is openssh-clients.",
+    "packages": {
+      "arch": [
+        "openssh"
+      ],
+      "debian": [
+        "openssh-client"
+      ],
+      "fedora": [
+        "openssh-clients"
+      ],
+      "suse": [
+        "openssh"
+      ]
+    }
+  },
+  {
+    "id": "ntfs-3g",
+    "name": "NTFS-3G",
+    "category": "system",
+    "description": "NTFS-3G. openSUSE builds it from the ntfs-3g_ntfsprogs source; the installable package is ntfs-3g.",
+    "packages": {
+      "arch": [
+        "ntfs-3g"
+      ],
+      "debian": [
+        "ntfs-3g"
+      ],
+      "fedora": [
+        "ntfs-3g"
+      ],
+      "suse": [
+        "ntfs-3g"
+      ]
+    }
+  },
+  {
+    "id": "btrfs-progs",
+    "name": "btrfs-progs",
+    "category": "system",
+    "description": "btrfs userspace tools. openSUSE calls the package btrfsprogs.",
+    "packages": {
+      "arch": [
+        "btrfs-progs"
+      ],
+      "debian": [
+        "btrfs-progs"
+      ],
+      "fedora": [
+        "btrfs-progs"
+      ],
+      "suse": [
+        "btrfsprogs"
+      ]
+    }
+  },
+  {
+    "id": "flatpak",
+    "name": "Flatpak",
+    "category": "system",
+    "description": "Flatpak application runtime.",
+    "packages": {
+      "arch": [
+        "flatpak"
+      ],
+      "debian": [
+        "flatpak"
+      ],
+      "fedora": [
+        "flatpak"
+      ],
+      "suse": [
+        "flatpak"
+      ]
+    }
+  },
+  {
+    "id": "bluez",
+    "name": "BlueZ",
+    "category": "system",
+    "description": "BlueZ Bluetooth stack.",
+    "packages": {
+      "arch": [
+        "bluez"
+      ],
+      "debian": [
+        "bluez"
+      ],
+      "fedora": [
+        "bluez"
+      ],
+      "suse": [
+        "bluez"
+      ]
+    }
+  },
+  {
+    "id": "cups",
+    "name": "CUPS",
+    "category": "system",
+    "description": "CUPS printing system.",
+    "packages": {
+      "arch": [
+        "cups"
+      ],
+      "debian": [
+        "cups"
+      ],
+      "fedora": [
+        "cups"
+      ],
+      "suse": [
+        "cups"
+      ]
+    }
+  },
+  {
+    "id": "pipewire",
+    "name": "PipeWire",
+    "category": "system",
+    "description": "PipeWire audio and video server.",
+    "packages": {
+      "arch": [
+        "pipewire"
+      ],
+      "debian": [
+        "pipewire"
+      ],
+      "fedora": [
+        "pipewire"
+      ],
+      "suse": [
+        "pipewire"
+      ]
+    }
+  },
+  {
+    "id": "fwupd",
+    "name": "fwupd",
+    "category": "system",
+    "description": "fwupd firmware update daemon.",
+    "packages": {
+      "arch": [
+        "fwupd"
+      ],
+      "debian": [
+        "fwupd"
+      ],
+      "fedora": [
+        "fwupd"
+      ],
+      "suse": [
+        "fwupd"
+      ]
+    }
+  },
+  {
+    "id": "tlp",
+    "name": "TLP",
+    "category": "system",
+    "description": "TLP laptop power saving.",
+    "packages": {
+      "arch": [
+        "tlp"
+      ],
+      "debian": [
+        "tlp"
+      ],
+      "fedora": [
+        "tlp"
+      ],
+      "suse": [
+        "tlp"
+      ]
+    }
+  },
+  {
+    "id": "power-profiles",
+    "name": "Power Profiles",
+    "category": "system",
+    "description": "power-profiles-daemon.",
+    "packages": {
+      "arch": [
+        "power-profiles-daemon"
+      ],
+      "debian": [
+        "power-profiles-daemon"
+      ],
+      "fedora": [
+        "power-profiles-daemon"
+      ],
+      "suse": [
+        "power-profiles-daemon"
+      ]
+    }
+  }
+]

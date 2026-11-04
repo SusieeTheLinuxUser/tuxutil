@@ -1,0 +1,1042 @@
+[
+  {
+    "id": "fstrim-timer",
+    "name": "Enable weekly SSD trim",
+    "category": "storage",
+    "description": "Enable fstrim.timer so unused blocks on SSDs and thin volumes are discarded weekly.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "fstrim.timer"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "fstrim.timer"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "fstrim.timer"
+    ]
+  },
+  {
+    "id": "swappiness",
+    "name": "Lower swap tendency",
+    "category": "memory",
+    "description": "Set vm.swappiness to 10 so the kernel keeps file cache longer before swapping. Undo restores the previous runtime value.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-swappiness.conf.prev\nif [ ! -f \"$prevfile\" ]; then\n    old=$(sysctl -n vm.swappiness)\n    printf '%s\\n' \"$old\" > \"$prevfile\"\nfi\nprintf '%s\\n' 'vm.swappiness=10' > /etc/sysctl.d/99-tuxutil-swappiness.conf\nsysctl -w vm.swappiness=10\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-swappiness.conf.prev\nif [ -f \"$prevfile\" ]; then old=$(cat \"$prevfile\"); else old=60; fi\nif [ -z \"$old\" ]; then old=60; fi\ncase $old in\n    *[!0-9A-Za-z._-]*) old=60 ;;\nesac\nrm -f /etc/sysctl.d/99-tuxutil-swappiness.conf \"$prevfile\"\nsysctl -w vm.swappiness=\"$old\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "vm.swappiness=10",
+      "/etc/sysctl.d/99-tuxutil-swappiness.conf"
+    ]
+  },
+  {
+    "id": "zram",
+    "name": "Compressed RAM swap",
+    "category": "memory",
+    "description": "Write a zram-generator config for a zstd zram device of half of RAM, capped at 4 GiB, and start it. Requires zram-generator (Debian package systemd-zram-generator). An existing config is backed up first. Undo stops that device and restores the backup, or deletes the file if this tweak created it.",
+    "risk": "medium",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/systemd/zram-generator.conf\nbak=/etc/systemd/zram-generator.conf.tuxutil.bak\nif [ -f \"$conf\" ] && [ ! -f \"$bak\" ]; then cp \"$conf\" \"$bak\"; fi\nprintf '%s\\n' '[zram0]' 'zram-size = min(ram / 2, 4096)' 'compression-algorithm = zstd' 'swap-priority = 100' > \"$conf\"\nsystemctl daemon-reload\nsystemctl start systemd-zram-setup@zram0.service\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/systemd/zram-generator.conf\nbak=/etc/systemd/zram-generator.conf.tuxutil.bak\nsystemctl stop systemd-zram-setup@zram0.service || true\nif [ -f \"$bak\" ]; then\n    cp \"$bak\" \"$conf\"\n    rm -f \"$bak\"\nelse\n    rm -f \"$conf\"\nfi\nsystemctl daemon-reload\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "compression-algorithm = zstd",
+      "/etc/systemd/zram-generator.conf"
+    ]
+  },
+  {
+    "id": "disable-nm-wait-online",
+    "name": "Do not wait for NetworkManager at boot",
+    "category": "boot",
+    "description": "Disable NetworkManager-wait-online.service so boot does not sit there until the network is online. Networking itself still starts.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "disable",
+        "NetworkManager-wait-online.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "enable",
+        "NetworkManager-wait-online.service"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "systemctl is-enabled NetworkManager-wait-online.service 2>/dev/null | grep -qx disabled\n"
+    ]
+  },
+  {
+    "id": "enable-ufw",
+    "name": "Enable UFW",
+    "category": "security",
+    "description": "Turn on UFW with incoming traffic denied, outgoing traffic allowed, and OpenSSH allowed. Other inbound services stop answering until you allow them.",
+    "risk": "medium",
+    "families": [
+      "arch",
+      "debian"
+    ],
+    "apply": [
+      [
+        "ufw",
+        "default",
+        "deny",
+        "incoming"
+      ],
+      [
+        "ufw",
+        "default",
+        "allow",
+        "outgoing"
+      ],
+      [
+        "ufw",
+        "allow",
+        "OpenSSH"
+      ],
+      [
+        "ufw",
+        "--force",
+        "enable"
+      ]
+    ],
+    "undo": [
+      [
+        "ufw",
+        "disable"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "ufw status | grep -q 'Status: active'\n"
+    ]
+  },
+  {
+    "id": "enable-firewalld",
+    "name": "Enable firewalld",
+    "category": "security",
+    "description": "Enable firewalld. The default public zone allows SSH and DHCPv6 client and blocks other inbound traffic.",
+    "risk": "medium",
+    "families": [
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "firewalld.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "firewalld.service"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "firewalld.service"
+    ]
+  },
+  {
+    "id": "dns-over-tls",
+    "name": "DNS over TLS",
+    "category": "network",
+    "description": "Point systemd-resolved at Cloudflare over TLS and restart it. Name lookup fails if the network blocks port 853. Undo deletes the drop-in and restarts resolved.",
+    "risk": "medium",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nmkdir -p /etc/systemd/resolved.conf.d\nprintf '%s\\n' '[Resolve]' 'DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com' 'DNSOverTLS=yes' 'DNSSEC=allow-downgrade' > /etc/systemd/resolved.conf.d/99-tuxutil-dot.conf\nsystemctl restart systemd-resolved.service\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nrm -f /etc/systemd/resolved.conf.d/99-tuxutil-dot.conf\nsystemctl restart systemd-resolved.service\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "DNSOverTLS=yes",
+      "/etc/systemd/resolved.conf.d/99-tuxutil-dot.conf"
+    ]
+  },
+  {
+    "id": "enable-bluetooth",
+    "name": "Enable Bluetooth",
+    "category": "desktop",
+    "description": "Enable and start bluetooth.service. The bluez package has to be installed already.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "bluetooth.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "bluetooth.service"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "bluetooth.service"
+    ]
+  },
+  {
+    "id": "enable-cups",
+    "name": "Enable printing",
+    "category": "desktop",
+    "description": "Enable and start cups.service. The cups package has to be installed already.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "cups.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "cups.service"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "cups.service"
+    ]
+  },
+  {
+    "id": "pacman-parallel",
+    "name": "Pacman parallel downloads",
+    "category": "packages",
+    "description": "Set ParallelDownloads to 5 in /etc/pacman.conf. The commented default downloads one package at a time. The original file is copied to /etc/pacman.conf.tuxutil-parallel.bak and undo restores it.",
+    "risk": "low",
+    "families": [
+      "arch"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/pacman.conf\nbak=/etc/pacman.conf.tuxutil-parallel.bak\nif [ ! -f \"$bak\" ]; then cp \"$src\" \"$bak\"; fi\nif grep -q '^ParallelDownloads' \"$src\"; then\n    sed -i 's/^ParallelDownloads.*/ParallelDownloads = 5/' \"$src\"\nelif grep -q '^#ParallelDownloads' \"$src\"; then\n    sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' \"$src\"\nelse\n    printf '\\n%s\\n' 'ParallelDownloads = 5' >> \"$src\"\nfi\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/pacman.conf\nbak=/etc/pacman.conf.tuxutil-parallel.bak\ncp \"$bak\" \"$src\"\nrm -f \"$bak\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "ParallelDownloads = 5",
+      "/etc/pacman.conf"
+    ]
+  },
+  {
+    "id": "pacman-multilib",
+    "name": "Enable the multilib repository",
+    "category": "packages",
+    "description": "Uncomment the [multilib] section in /etc/pacman.conf so 32-bit libraries can be installed. Undo restores the backup. Run pacman -Sy yourself afterwards; this tweak does not refresh the databases.",
+    "risk": "low",
+    "families": [
+      "arch"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/pacman.conf\nbak=/etc/pacman.conf.tuxutil-multilib.bak\nif [ ! -f \"$bak\" ]; then cp \"$src\" \"$bak\"; fi\nsed -i '/^#\\[multilib\\]$/{s/^#//;n;s/^#Include/Include/}' \"$src\"\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/pacman.conf\nbak=/etc/pacman.conf.tuxutil-multilib.bak\ncp \"$bak\" \"$src\"\nrm -f \"$bak\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "[multilib]",
+      "/etc/pacman.conf"
+    ]
+  },
+  {
+    "id": "apt-speed",
+    "name": "APT download settings",
+    "category": "packages",
+    "description": "Drop in apt settings that keep a small pipeline of downloads, skip translation indexes, and retry three times. Recommended packages stay enabled.",
+    "risk": "low",
+    "families": [
+      "debian"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprintf '%s\\n' 'Acquire::http::Pipeline-Depth \"5\";' 'Acquire::https::Pipeline-Depth \"5\";' 'Acquire::Languages \"none\";' 'Acquire::Retries \"3\";' > /etc/apt/apt.conf.d/99tuxutil-speed\n"
+      ]
+    ],
+    "undo": [
+      [
+        "rm",
+        "-f",
+        "/etc/apt/apt.conf.d/99tuxutil-speed"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "Acquire::Languages \"none\";",
+      "/etc/apt/apt.conf.d/99tuxutil-speed"
+    ]
+  },
+  {
+    "id": "dnf-parallel",
+    "name": "DNF parallel downloads",
+    "category": "packages",
+    "description": "Set max_parallel_downloads=10 in /etc/dnf/dnf.conf, which both DNF 4 and DNF 5 read. Undo restores the backup. The value stays under DNF5's limit of 20.",
+    "risk": "low",
+    "families": [
+      "fedora"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/dnf/dnf.conf\nbak=/etc/dnf/dnf.conf.tuxutil.bak\nif [ ! -f \"$bak\" ]; then cp \"$src\" \"$bak\"; fi\nif grep -q '^max_parallel_downloads=' \"$src\"; then\n    sed -i 's/^max_parallel_downloads=.*/max_parallel_downloads=10/' \"$src\"\nelse\n    printf '\\n%s\\n' 'max_parallel_downloads=10' >> \"$src\"\nfi\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/dnf/dnf.conf\nbak=/etc/dnf/dnf.conf.tuxutil.bak\ncp \"$bak\" \"$src\"\nrm -f \"$bak\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "max_parallel_downloads=10",
+      "/etc/dnf/dnf.conf"
+    ]
+  },
+  {
+    "id": "zypper-parallel",
+    "name": "Zypper parallel downloads",
+    "category": "packages",
+    "description": "Set download.max_concurrent_connections to 8 via /etc/zypp/zypp.conf.d. Current Tumbleweed and recent Leap read that directory. Undo deletes the drop-in.",
+    "risk": "low",
+    "families": [
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nmkdir -p /etc/zypp/zypp.conf.d\nprintf '%s\\n' '[main]' 'download.max_concurrent_connections = 8' > /etc/zypp/zypp.conf.d/99-tuxutil.conf\n"
+      ]
+    ],
+    "undo": [
+      [
+        "rm",
+        "-f",
+        "/etc/zypp/zypp.conf.d/99-tuxutil.conf"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "download.max_concurrent_connections = 8",
+      "/etc/zypp/zypp.conf.d/99-tuxutil.conf"
+    ]
+  },
+  {
+    "id": "flathub",
+    "name": "Add the Flathub remote",
+    "category": "packages",
+    "description": "Add the system Flathub remote if it is missing, and remember that this tweak added it. Undo removes the remote only in that case, and leaves a remote that was already there.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nif flatpak remotes --system | awk '{print $1}' | grep -qx flathub; then\n    exit 0\nfi\nflatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo\nmkdir -p /etc/tuxutil\ntouch /etc/tuxutil/flathub-added\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nif [ -f /etc/tuxutil/flathub-added ]; then\n    flatpak remote-delete --system flathub\n    rm -f /etc/tuxutil/flathub-added\nfi\n"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "flatpak remotes --system | awk '{print $1}' | grep -qx flathub\n"
+    ]
+  },
+  {
+    "id": "max-map-count",
+    "name": "Raise vm.max_map_count",
+    "category": "gaming",
+    "description": "Set vm.max_map_count to 1048576, which Steam, Proton, and some games need. Undo restores the previous runtime value (the kernel default is 65530).",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-max-map-count.conf.prev\nif [ ! -f \"$prevfile\" ]; then\n    old=$(sysctl -n vm.max_map_count)\n    printf '%s\\n' \"$old\" > \"$prevfile\"\nfi\nprintf '%s\\n' 'vm.max_map_count=1048576' > /etc/sysctl.d/99-tuxutil-max-map-count.conf\nsysctl -w vm.max_map_count=1048576\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-max-map-count.conf.prev\nif [ -f \"$prevfile\" ]; then old=$(cat \"$prevfile\"); else old=65530; fi\nif [ -z \"$old\" ]; then old=65530; fi\ncase $old in\n    *[!0-9A-Za-z._-]*) old=65530 ;;\nesac\nrm -f /etc/sysctl.d/99-tuxutil-max-map-count.conf \"$prevfile\"\nsysctl -w vm.max_map_count=\"$old\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "vm.max_map_count=1048576",
+      "/etc/sysctl.d/99-tuxutil-max-map-count.conf"
+    ]
+  },
+  {
+    "id": "journald-cap",
+    "name": "Cap the journal size",
+    "category": "storage",
+    "description": "Limit the persistent journal to 200M via a journald drop-in and restart systemd-journald. Undo deletes the drop-in and restarts it.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nmkdir -p /etc/systemd/journald.conf.d\nprintf '%s\\n' '[Journal]' 'SystemMaxUse=200M' > /etc/systemd/journald.conf.d/99-tuxutil.conf\nsystemctl restart systemd-journald.service\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nrm -f /etc/systemd/journald.conf.d/99-tuxutil.conf\nsystemctl restart systemd-journald.service\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "SystemMaxUse=200M",
+      "/etc/systemd/journald.conf.d/99-tuxutil.conf"
+    ]
+  },
+  {
+    "id": "disable-popularity-contest",
+    "name": "Opt out of popularity-contest",
+    "category": "privacy",
+    "description": "Set PARTICIPATE=\"no\" in /etc/popularity-contest.conf so the Debian package survey does not run. An existing file is backed up first; undo restores it or deletes a file this tweak created.",
+    "risk": "low",
+    "families": [
+      "debian"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/popularity-contest.conf\nbak=/etc/popularity-contest.conf.tuxutil.bak\nif [ -f \"$conf\" ]; then\n    if [ ! -f \"$bak\" ]; then cp \"$conf\" \"$bak\"; fi\n    if grep -q '^PARTICIPATE=' \"$conf\"; then\n        sed -i 's/^PARTICIPATE=.*/PARTICIPATE=\"no\"/' \"$conf\"\n    else\n        printf '\\n%s\\n' 'PARTICIPATE=\"no\"' >> \"$conf\"\n    fi\nelse\n    printf '%s\\n' 'PARTICIPATE=\"no\"' > \"$conf\"\nfi\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/popularity-contest.conf\nbak=/etc/popularity-contest.conf.tuxutil.bak\nif [ -f \"$bak\" ]; then\n    cp \"$bak\" \"$conf\"\n    rm -f \"$bak\"\nelse\n    rm -f \"$conf\"\nfi\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "PARTICIPATE=\"no\"",
+      "/etc/popularity-contest.conf"
+    ]
+  },
+  {
+    "id": "disable-ubuntu-report",
+    "name": "Opt out of ubuntu-report",
+    "category": "privacy",
+    "description": "Run ubuntu-report -f send no for the current user. That stores an opt-out and sends Canonical a one-time opt-out ping, not a hardware report. It does not cover other accounts. Undo deletes that user's ubuntu-report cache.",
+    "risk": "low",
+    "families": [
+      "debian"
+    ],
+    "apply": [
+      [
+        "ubuntu-report",
+        "-f",
+        "send",
+        "no"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "rm -rf \"${XDG_CACHE_HOME:-$HOME/.cache}/ubuntu-report\"\n"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "grep -Rqs '\"OptOut\": true' \"${XDG_CACHE_HOME:-$HOME/.cache}/ubuntu-report\" || grep -Rqs '\"OptOut\":true' \"${XDG_CACHE_HOME:-$HOME/.cache}/ubuntu-report\"\n"
+    ],
+    "root": false
+  },
+  {
+    "id": "disable-whoopsie",
+    "name": "Disable whoopsie error reports",
+    "category": "privacy",
+    "description": "Disable Ubuntu's whoopsie service, which uploads crash reports. Undo enables it again. The unit has to exist.",
+    "risk": "low",
+    "families": [
+      "debian"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "whoopsie.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "whoopsie.service"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "systemctl is-enabled whoopsie.service 2>/dev/null | grep -qx disabled\n"
+    ]
+  },
+  {
+    "id": "systemd-timesyncd",
+    "name": "Enable network time",
+    "category": "network",
+    "description": "Enable systemd-timesyncd. If chrony or ntpd already owns NTP, systemd refuses to run both and this command fails.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "systemd-timesyncd.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "systemd-timesyncd.service"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "systemd-timesyncd.service"
+    ]
+  },
+  {
+    "id": "tcp-bbr",
+    "name": "TCP BBR congestion control",
+    "category": "network",
+    "description": "Use the BBR congestion control with the fq queueing discipline. Undo restores the previous runtime values (commonly cubic and fq_codel).",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/sysctl.d/99-tuxutil-bbr.conf\nif [ ! -f \"$conf.qdisc.prev\" ]; then sysctl -n net.core.default_qdisc > \"$conf.qdisc.prev\"; fi\nif [ ! -f \"$conf.cc.prev\" ]; then sysctl -n net.ipv4.tcp_congestion_control > \"$conf.cc.prev\"; fi\nprintf '%s\\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' > \"$conf\"\nsysctl -w net.core.default_qdisc=fq\nsysctl -w net.ipv4.tcp_congestion_control=bbr\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nconf=/etc/sysctl.d/99-tuxutil-bbr.conf\nqdisc=fq_codel\ncc=cubic\nif [ -f \"$conf.qdisc.prev\" ]; then qdisc=$(cat \"$conf.qdisc.prev\"); fi\nif [ -f \"$conf.cc.prev\" ]; then cc=$(cat \"$conf.cc.prev\"); fi\ncase $qdisc in *[!0-9A-Za-z._-]*) qdisc=fq_codel ;; esac\ncase $cc in *[!0-9A-Za-z._-]*) cc=cubic ;; esac\nrm -f \"$conf\" \"$conf.qdisc.prev\" \"$conf.cc.prev\"\nsysctl -w net.core.default_qdisc=\"$qdisc\"\nsysctl -w net.ipv4.tcp_congestion_control=\"$cc\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "net.ipv4.tcp_congestion_control=bbr",
+      "/etc/sysctl.d/99-tuxutil-bbr.conf"
+    ]
+  },
+  {
+    "id": "inotify-watches",
+    "name": "Raise inotify watch limit",
+    "category": "dev",
+    "description": "Set fs.inotify.max_user_watches to 524288 so large projects and file indexers do not run out of watches. Undo restores the previous runtime value.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-inotify-watches.conf.prev\nif [ ! -f \"$prevfile\" ]; then\n    old=$(sysctl -n fs.inotify.max_user_watches)\n    printf '%s\\n' \"$old\" > \"$prevfile\"\nfi\nprintf '%s\\n' 'fs.inotify.max_user_watches=524288' > /etc/sysctl.d/99-tuxutil-inotify-watches.conf\nsysctl -w fs.inotify.max_user_watches=524288\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-inotify-watches.conf.prev\nif [ -f \"$prevfile\" ]; then old=$(cat \"$prevfile\"); else old=8192; fi\nif [ -z \"$old\" ]; then old=8192; fi\ncase $old in\n    *[!0-9A-Za-z._-]*) old=8192 ;;\nesac\nrm -f /etc/sysctl.d/99-tuxutil-inotify-watches.conf \"$prevfile\"\nsysctl -w fs.inotify.max_user_watches=\"$old\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "fs.inotify.max_user_watches=524288",
+      "/etc/sysctl.d/99-tuxutil-inotify-watches.conf"
+    ]
+  },
+  {
+    "id": "nofile-limits",
+    "name": "Raise open-file limit",
+    "category": "dev",
+    "description": "Allow 524288 open files per login via /etc/security/limits.d. Already-open sessions keep the old limit until the next login. Undo deletes the drop-in.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nmkdir -p /etc/security/limits.d\nprintf '%s\\n' '* soft nofile 524288' '* hard nofile 524288' > /etc/security/limits.d/99-tuxutil.conf\n"
+      ]
+    ],
+    "undo": [
+      [
+        "rm",
+        "-f",
+        "/etc/security/limits.d/99-tuxutil.conf"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "* hard nofile 524288",
+      "/etc/security/limits.d/99-tuxutil.conf"
+    ]
+  },
+  {
+    "id": "coredump-storage",
+    "name": "Do not store core dumps",
+    "category": "privacy",
+    "description": "Tell systemd-coredump to discard crash dumps instead of writing them under /var/lib/systemd/coredump. Undo deletes the drop-in. This does not change SELinux or AppArmor.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nmkdir -p /etc/systemd/coredump.conf.d\nprintf '%s\\n' '[Coredump]' 'Storage=none' 'ProcessSizeMax=0' > /etc/systemd/coredump.conf.d/99-tuxutil.conf\n"
+      ]
+    ],
+    "undo": [
+      [
+        "rm",
+        "-f",
+        "/etc/systemd/coredump.conf.d/99-tuxutil.conf"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "Storage=none",
+      "/etc/systemd/coredump.conf.d/99-tuxutil.conf"
+    ]
+  },
+  {
+    "id": "unattended-upgrades",
+    "name": "Automatic security upgrades",
+    "category": "packages",
+    "description": "Enable APT's periodic unattended upgrades. Nothing is installed until the unattended-upgrades package is present; once it is, security updates install on their own.",
+    "risk": "medium",
+    "families": [
+      "debian"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprintf '%s\\n' 'APT::Periodic::Update-Package-Lists \"1\";' 'APT::Periodic::Unattended-Upgrade \"1\";' > /etc/apt/apt.conf.d/99tuxutil-unattended\n"
+      ]
+    ],
+    "undo": [
+      [
+        "rm",
+        "-f",
+        "/etc/apt/apt.conf.d/99tuxutil-unattended"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "APT::Periodic::Unattended-Upgrade \"1\";",
+      "/etc/apt/apt.conf.d/99tuxutil-unattended"
+    ]
+  },
+  {
+    "id": "dnf-automatic",
+    "name": "Enable dnf-automatic",
+    "category": "packages",
+    "description": "Enable dnf-automatic.timer from the dnf-automatic package. Whether updates are only downloaded or also installed depends on the existing /etc/dnf/automatic.conf.",
+    "risk": "medium",
+    "families": [
+      "fedora"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "dnf-automatic.timer"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "dnf-automatic.timer"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "dnf-automatic.timer"
+    ]
+  },
+  {
+    "id": "disable-cups-browsed",
+    "name": "Disable remote printer discovery",
+    "category": "security",
+    "description": "Disable cups-browsed, which discovers printers on the network and has a history of serious bugs. Local CUPS printing stays available. Undo enables the service again.",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "cups-browsed.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "cups-browsed.service"
+      ]
+    ],
+    "check": [
+      "sh",
+      "-c",
+      "systemctl is-enabled cups-browsed.service 2>/dev/null | grep -qx disabled\n"
+    ]
+  },
+  {
+    "id": "paccache-timer",
+    "name": "Clean the pacman cache weekly",
+    "category": "packages",
+    "description": "Enable paccache.timer from pacman-contrib so old package versions are removed from the cache. The package has to be installed already.",
+    "risk": "low",
+    "families": [
+      "arch"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "paccache.timer"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "paccache.timer"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "paccache.timer"
+    ]
+  },
+  {
+    "id": "makepkg-jobs",
+    "name": "Parallel makepkg builds",
+    "category": "packages",
+    "description": "Set MAKEFLAGS=\"-j$(nproc)\" in /etc/makepkg.conf so package builds use every core. Undo restores the backup.",
+    "risk": "low",
+    "families": [
+      "arch"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/makepkg.conf\nbak=/etc/makepkg.conf.tuxutil.bak\nif [ ! -f \"$bak\" ]; then cp \"$src\" \"$bak\"; fi\nif grep -q '^MAKEFLAGS=' \"$src\"; then\n    sed -i 's|^MAKEFLAGS=.*|MAKEFLAGS=\"-j$(nproc)\"|' \"$src\"\nelif grep -q '^#MAKEFLAGS=' \"$src\"; then\n    sed -i 's|^#MAKEFLAGS=.*|MAKEFLAGS=\"-j$(nproc)\"|' \"$src\"\nelse\n    printf '\\n%s\\n' 'MAKEFLAGS=\"-j$(nproc)\"' >> \"$src\"\nfi\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nsrc=/etc/makepkg.conf\nbak=/etc/makepkg.conf.tuxutil.bak\ncp \"$bak\" \"$src\"\nrm -f \"$bak\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "MAKEFLAGS=\"-j$(nproc)\"",
+      "/etc/makepkg.conf"
+    ]
+  },
+  {
+    "id": "vfs-cache-pressure",
+    "name": "Keep filesystem cache longer",
+    "category": "memory",
+    "description": "Set vm.vfs_cache_pressure to 50 so directory and inode caches are reclaimed more slowly. Undo restores the previous runtime value (the kernel default is 100).",
+    "risk": "low",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-vfs-cache-pressure.conf.prev\nif [ ! -f \"$prevfile\" ]; then\n    old=$(sysctl -n vm.vfs_cache_pressure)\n    printf '%s\\n' \"$old\" > \"$prevfile\"\nfi\nprintf '%s\\n' 'vm.vfs_cache_pressure=50' > /etc/sysctl.d/99-tuxutil-vfs-cache-pressure.conf\nsysctl -w vm.vfs_cache_pressure=50\n"
+      ]
+    ],
+    "undo": [
+      [
+        "sh",
+        "-c",
+        "set -eu\nprevfile=/etc/sysctl.d/99-tuxutil-vfs-cache-pressure.conf.prev\nif [ -f \"$prevfile\" ]; then old=$(cat \"$prevfile\"); else old=100; fi\nif [ -z \"$old\" ]; then old=100; fi\ncase $old in\n    *[!0-9A-Za-z._-]*) old=100 ;;\nesac\nrm -f /etc/sysctl.d/99-tuxutil-vfs-cache-pressure.conf \"$prevfile\"\nsysctl -w vm.vfs_cache_pressure=\"$old\"\n"
+      ]
+    ],
+    "check": [
+      "grep",
+      "-qxF",
+      "vm.vfs_cache_pressure=50",
+      "/etc/sysctl.d/99-tuxutil-vfs-cache-pressure.conf"
+    ]
+  },
+  {
+    "id": "systemd-oomd",
+    "name": "Enable systemd-oomd",
+    "category": "memory",
+    "description": "Enable systemd-oomd, which can kill processes when memory or swap is nearly full. Undo disables it.",
+    "risk": "medium",
+    "families": [
+      "arch",
+      "debian",
+      "fedora",
+      "suse"
+    ],
+    "apply": [
+      [
+        "systemctl",
+        "enable",
+        "--now",
+        "systemd-oomd.service"
+      ]
+    ],
+    "undo": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "systemd-oomd.service"
+      ]
+    ],
+    "check": [
+      "systemctl",
+      "is-enabled",
+      "systemd-oomd.service"
+    ]
+  }
+]

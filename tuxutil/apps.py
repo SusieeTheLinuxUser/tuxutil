@@ -152,6 +152,7 @@ def commands_for(native, flatpaks, family, verb):
             steps.append((False, ["flatpak", "install", "--user", "-y", "flathub", *flatpaks]))
         else:
             # No --user: `apps list` counts per-user and system-wide installs alike.
+            # ponytail: flatpak errors out if the app is in both; pick by installation if that comes up.
             steps.append((False, ["flatpak", "uninstall", "-y", *flatpaks]))
     return steps
 

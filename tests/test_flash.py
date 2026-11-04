@@ -144,7 +144,7 @@ class SafetyTest(unittest.TestCase):
     def test_internal_disk_at_run_media_refused(self):
         normal, inverse, mounts, swaps = snap([
             disk("nvme1n1", "/dev/nvme1n1", 4000, "nvme", False, children=[
-                part("nvme1n1p1", "/dev/nvme1n1p1", "nvme1n1", mountpoints=["/run/media/susiee/storage"]),
+                part("nvme1n1p1", "/dev/nvme1n1p1", "nvme1n1", mountpoints=["/run/media/user/storage"]),
             ]),
         ])
         row = flash.list_disks(normal, inverse, mounts, swaps)[0]
@@ -202,7 +202,7 @@ class SafetyTest(unittest.TestCase):
         )
         self.assertIn("ISO file resides", on_stick)
         elsewhere = flash.reason_for(
-            "/dev/sdc", normal, inverse, mounts, swaps, iso="/home/susiee/Documents/ISOs/os.iso",
+            "/dev/sdc", normal, inverse, mounts, swaps, iso="/home/user/os.iso",
         )
         self.assertEqual(elsewhere, "")
 

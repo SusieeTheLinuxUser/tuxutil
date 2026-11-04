@@ -40,11 +40,11 @@ winiso options --json, linuxiso options --json:
 Smallest thing that works. No unrequested abstractions, no new dependencies, no scaffolding for later. Mark deliberate shortcuts with a `ponytail:` comment naming the limit. Non-trivial logic gets a small `unittest` in `tests/test_<module>.py`. Tests must pass in CI with no root, no ISOs and no network.
 
 ## Machine safety: hard rules, no exceptions
-This is the owner's daily PC and they are away.
+Agents run on the owner's daily PC, often unattended.
 - Never reboot, shut down, suspend, or log out. Never change system config or install system packages.
 - Never run sudo, pkexec, su, or doas. They would prompt on the owner's desktop. If something truly needs root, write down what, and test it another way.
 - Never write to any `/dev/*` block device, and never attach host disks or USB devices to a VM. `sda` and `sr0` here are real devices. Test flashing against regular image files only.
-- Write only inside this repo or your worktree. All large scratch output goes in `/home/susiee/Projects/tuxutil/.work/<your-task>/` (gitignored). Don't use `/tmp` for ISOs, it is RAM. Delete your scratch when finished, except anything the PR says to keep.
+- Write only inside this repo or your worktree. All large scratch output goes in `.work/<your-task>/` in the main checkout (gitignored). Don't use `/tmp` for ISOs, it is RAM. Delete your scratch when finished, except anything the PR says to keep.
 - ISOs in `~/Documents/ISOs/` and `~/Torrents/` are read-only inputs. Never modify, move, rename, or delete them.
 - VMs: QEMU with KVM on image files, at most 4 vCPU and 8 GB RAM each, no host passthrough, always killed when done. Kill only processes you started.
 - Never touch another project, dotfiles, or `~/.claude`, `~/.codex`, `~/.grok`, `~/.gemini`.

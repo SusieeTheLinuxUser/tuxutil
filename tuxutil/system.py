@@ -63,8 +63,12 @@ TOOL_PACKAGES = {
     "mcopy": {"default": "mtools"},
     "lsblk": {"default": "util-linux"},
     "unshare": {"default": "util-linux"},
+    "newuidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},
+    "newgidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},
     "flatpak": {},
     "qemu-system-x86_64": {"arch": "qemu-full", "debian": "qemu-system-x86", "fedora": "qemu-system-x86", "suse": "qemu-x86"},
+    # 7z reads UDF. xorriso only sees the ISO9660 bridge on Microsoft ISOs.
+    "7z": {"arch": "7zip", "debian": "p7zip-full", "fedora": "p7zip-plugins", "suse": "7zip", "alpine": "7zip", "void": "7zip"},
 }
 
 
@@ -132,17 +136,35 @@ def as_root(cmd):
         return ["sudo", *cmd]
     if shutil.which("doas"):
         return ["doas", *cmd]
+    if DRY_RUN:
+        return list(cmd)
     raise SystemExit("Need root but found no pkexec, sudo or doas.")
+
+
+def as_root_all(cmds):
+    """One escalation for every command in cmds, joined with &&."""
+    script = " && ".join(shlex.join(map(str, cmd)) for cmd in cmds)
+    return as_root(["sh", "-c", script])
 
 
 def run(cmd, *, check=True, capture=False, **kwargs):
     """Run an external command, echoing it. Honors DRY_RUN. Never uses a shell."""
-    print("$ " + shlex.join(map(str, cmd)), flush=True)
+    # Captured commands feed --json listings, so their echo must stay off stdout.
+    print("$ " + shlex.join(map(str, cmd)), flush=True, file=sys.stderr if capture else sys.stdout)
     if DRY_RUN:
         return subprocess.CompletedProcess(cmd, 0, "", "")
     if capture:
         kwargs.update(stdout=subprocess.PIPE, text=True)
     return subprocess.run([str(c) for c in cmd], check=check, **kwargs)
+
+
+def query(cmd, timeout=15):
+    """Run a read-only command and return its result. Never dry-runs and never raises."""
+    try:
+        return subprocess.run([str(c) for c in cmd], capture_output=True, text=True,
+                              check=False, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return subprocess.CompletedProcess(list(cmd), 127, "", "")
 
 
 def progress(percent, message=""):

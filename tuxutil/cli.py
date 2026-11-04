@@ -1,7 +1,9 @@
 """Command line entry point. Each feature module adds its own subcommand via register()."""
 import argparse
 import json
+import shlex
 import shutil
+import subprocess
 import sys
 
 from . import __version__, apps, flash, gui, linuxiso, system, tweaks, winiso
@@ -25,8 +27,9 @@ def cmd_doctor(args):
 
 def cmd_update(args):
     distro = system.detect()
-    for cmd in system.UPDATE_CMDS.get(distro.family, []):
-        system.run(system.as_root(cmd))
+    cmds = system.UPDATE_CMDS.get(distro.family, [])
+    if cmds:
+        system.run(system.as_root_all(cmds))
     if shutil.which("flatpak"):
         system.run(["flatpak", "update", "-y"])
     return 0
@@ -58,6 +61,15 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
         return 130
+    except subprocess.CalledProcessError as exc:
+        rendered = shlex.join(str(part) for part in exc.cmd) if exc.cmd else "command"
+        code = exc.returncode if isinstance(exc.returncode, int) and exc.returncode > 0 else 1
+        print(f"Command failed (exit {code}): {rendered}", file=sys.stderr)
+        return code
+    except FileNotFoundError as exc:
+        name = exc.filename or "command"
+        print(f"Command not found (exit 127): {name}", file=sys.stderr)
+        return 127
 
 
 if __name__ == "__main__":

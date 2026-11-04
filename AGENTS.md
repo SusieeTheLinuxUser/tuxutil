@@ -24,6 +24,17 @@ tuxutil flash list --json
 tuxutil flash write ISO DEVICE --confirm DEVICE [--no-verify]
 tuxutil gui
 ```
+Listing commands print exactly this JSON (extra keys are fine):
+```
+apps list:     [{"id","name","category","description","installed":bool,"available":bool}]
+tweaks list:   [{"id","name","category","description","risk":"low|medium|high","applied":bool|null,"available":bool}]
+winiso info:   {"editions":[{"index":int,"name","arch","size_bytes":int,"build"}]}
+linuxiso info: {"family","squashfs","label","arch","supported":bool,"notes"}
+flash list:    [{"path","model","size_bytes":int,"transport","removable":bool,"safe":bool,"reason"}]
+winiso options --json, linuxiso options --json:
+               [{"flag":"--name","type":"bool|str|path|list|choice","label","help","default","choices":[...]}]
+```
+`options --json` describes every `build` option, so the GUI generates its forms from data and new options never need GUI changes.
 
 ## Code style
 Smallest thing that works. No unrequested abstractions, no new dependencies, no scaffolding for later. Mark deliberate shortcuts with a `ponytail:` comment naming the limit. Non-trivial logic gets a small `unittest` in `tests/test_<module>.py`. Tests must pass in CI with no root, no ISOs and no network.
@@ -39,7 +50,7 @@ This is the owner's daily PC and they are away.
 - Never touch another project, dotfiles, or `~/.claude`, `~/.codex`, `~/.grok`, `~/.gemini`.
 
 ## Git workflow
-- `main`: stable, protected. `dev`: integration, protected. Never push to either directly.
+- `main`: stable. `dev`: integration. Never push to either directly (a local pre-push hook blocks it; GitHub protection isn't available while the repo is private on the Free plan).
 - Work on `feat/<name>` or `fix/<name>`, open a PR into `dev`. Don't merge; the orchestrator reviews and merges. Squash merges only, so one PR is one revertable commit.
 - Never force-push a branch you don't own. Never commit ISOs, disk images, or secrets.
 - To undo a merged change: `git revert <sha>` in a new PR. Every merge to `main` gets a `v0.x.y` tag as a known-good restore point.

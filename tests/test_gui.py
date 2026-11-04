@@ -83,6 +83,11 @@ class TestGuiNoPySide6(unittest.TestCase):
         self.assertNotIn("TopSecret456", masked)
         self.assertIn("******", masked)
 
+    def test_signed_link_is_masked_in_the_log(self):
+        masked = gui.mask_command_for_log(["tuxutil", "iso", "download", "https://example.test/a.iso?sig=abc&t=1"])
+        self.assertNotIn("abc", masked)
+        self.assertIn("https://example.test/a.iso", masked)
+
     def test_format_size(self):
         self.assertEqual(gui.format_size(0), "0 B")
         self.assertEqual(gui.format_size(1024), "1 KB")

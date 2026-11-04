@@ -29,6 +29,9 @@ prepare_app() {
     cache_base=${XDG_CACHE_HOME:-$HOME/.cache}/tuxutil
     app_dir=$cache_base/app
     mkdir -p "$cache_base" || fail "cannot create cache directory: $cache_base"
+    old_dir=$cache_base/.old-app
+    # A run killed mid-swap leaves the good copy here.
+    if [ ! -d "$app_dir" ] && [ -d "$old_dir" ]; then mv "$old_dir" "$app_dir"; fi
     work=$(mktemp -d "$cache_base/.download.XXXXXX") || fail "cannot create temporary folder in $cache_base"
     trap 'rm -rf "$work"' EXIT
     trap 'rm -rf "$work"; exit 130' INT TERM
@@ -45,7 +48,6 @@ prepare_app() {
             fail 'download did not contain a valid TuxUtil source tree.'
         fi
         rm -f "$work/source.tar.gz"
-        old_dir=$cache_base/.old-app
         rm -rf "$old_dir"
         if [ -d "$app_dir" ]; then mv "$app_dir" "$old_dir" || fail 'cannot move cached app aside.'; fi
         if mv "$work" "$app_dir"; then
@@ -79,6 +81,10 @@ run_app() {
         esac
     done
 
+    # python -c and -m search the current folder first, so set-up runs from the cache, and the app
+    # starts with the current folder taken off its search path. The app still sees it for relative paths.
+    caller_dir=$PWD
+    cd "$cache_base" || fail "cannot enter cache directory: $cache_base"
     if [ "$is_gui" -eq 1 ] && ! python3 -c 'import PySide6.QtWidgets' >/dev/null 2>&1; then
         venv_python=$cache_base/venv/bin/python
         if [ ! -x "$venv_python" ] && ! python3 -m venv --system-site-packages "$cache_base/venv"; then
@@ -98,10 +104,12 @@ run_app() {
         python_bin=$venv_python
     fi
 
+    cd "$caller_dir" || fail "cannot return to $caller_dir"
+    start='import sys; sys.path[:] = [p for p in sys.path if p]; sys.argv[0] = "tuxutil"; from tuxutil.cli import main; raise SystemExit(main())'
     if [ -r /dev/tty ] && ( : </dev/tty ) 2>/dev/null; then
-        PYTHONPATH=$app_dir "$python_bin" -m tuxutil "$@" </dev/tty
+        PYTHONPATH=$app_dir "$python_bin" -c "$start" "$@" </dev/tty
     else
-        PYTHONPATH=$app_dir "$python_bin" -m tuxutil "$@" </dev/null
+        PYTHONPATH=$app_dir "$python_bin" -c "$start" "$@" </dev/null
     fi
 }
 

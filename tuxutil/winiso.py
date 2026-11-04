@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from html import escape as html_escape
 from typing import List, Optional
@@ -168,6 +169,63 @@ _ARCH_MAP = {"x86_64": "amd64", "amd64": "amd64", "x86": "x86", "i386": "x86",
              "arm64": "arm64", "aarch64": "arm64"}
 
 
+# Erases disk 0 with no prompt, so it is opt-in: the default leaves disk choice to the
+# person at Setup's disk screen. Booting this media on the wrong PC would destroy data.
+# ponytail: GPT layout, UEFI boot only. Legacy BIOS installs use Setup's disk screen.
+_WIPE_DISK0 = [
+        '      <DiskConfiguration>',
+        '        <Disk wcm:action="add">',
+        "          <DiskID>0</DiskID>",
+        "          <WillWipeDisk>true</WillWipeDisk>",
+        "          <CreatePartitions>",
+        '            <CreatePartition wcm:action="add">',
+        "              <Order>1</Order>",
+        "              <Type>EFI</Type>",
+        "              <Size>260</Size>",
+        "            </CreatePartition>",
+        '            <CreatePartition wcm:action="add">',
+        "              <Order>2</Order>",
+        "              <Type>MSR</Type>",
+        "              <Size>128</Size>",
+        "            </CreatePartition>",
+        '            <CreatePartition wcm:action="add">',
+        "              <Order>3</Order>",
+        "              <Type>Primary</Type>",
+        "              <Extend>true</Extend>",
+        "            </CreatePartition>",
+        "          </CreatePartitions>",
+        "          <ModifyPartitions>",
+        '            <ModifyPartition wcm:action="add">',
+        "              <Order>1</Order>",
+        "              <PartitionID>1</PartitionID>",
+        "              <Format>FAT32</Format>",
+        "              <Label>System</Label>",
+        "            </ModifyPartition>",
+        '            <ModifyPartition wcm:action="add">',
+        "              <Order>2</Order>",
+        "              <PartitionID>2</PartitionID>",
+        "            </ModifyPartition>",
+        '            <ModifyPartition wcm:action="add">',
+        "              <Order>3</Order>",
+        "              <PartitionID>3</PartitionID>",
+        "              <Format>NTFS</Format>",
+        "              <Label>Windows</Label>",
+        "              <Letter>C</Letter>",
+        "            </ModifyPartition>",
+        "          </ModifyPartitions>",
+        "        </Disk>",
+        "        <WillShowUI>OnError</WillShowUI>",
+        "      </DiskConfiguration>",
+]
+_INSTALL_TO = [
+    "          <InstallTo>",
+    "            <DiskID>0</DiskID>",
+    "            <PartitionID>3</PartitionID>",
+    "          </InstallTo>",
+    "          <InstallToAvailablePartition>false</InstallToAvailablePartition>",
+]
+
+
 @dataclass
 class Edition:
     index: int
@@ -197,6 +255,7 @@ class BuildOptions:
     disable_hibernation: bool = True
     compact_os: bool = False
     compression: str = "solid"
+    wipe_disk: bool = False
 
 
 def _xml_escape(s: str) -> str:
@@ -205,12 +264,6 @@ def _xml_escape(s: str) -> str:
 
 def _ps_quote(s: str) -> str:
     return "'" + str(s).replace("'", "''") + "'"
-
-
-def _scratch_dir(path=None) -> str:
-    path = path or os.path.join(os.path.expanduser("~"), "Projects", "tuxutil", ".work", "winiso")
-    os.makedirs(path, exist_ok=True)
-    return path
 
 
 def _parse_wiminfo(text: str) -> list:
@@ -307,6 +360,15 @@ def _resolve_edition(editions: list, spec: str) -> Edition:
     )
 
 
+def _validate_username(name: str):
+    """Windows rejects these in account names, and Setup fails late if they slip through."""
+    if len(name) > 20 or not name.strip() or name.endswith(".") or set(name) & set('/\\[]:;|=,+*?<>"@'):
+        raise SystemExit(f"Invalid Windows username: {name!r}. Use up to 20 characters without "
+                         '/ \\ [ ] : ; | = , + * ? < > " @')
+    if name.lower() in ("administrator", "guest", "defaultaccount", "system", "wdagutilityaccount"):
+        raise SystemExit(f"{name!r} is reserved by Windows. Pick another username.")
+
+
 def _get_apps_to_remove(opts: BuildOptions) -> list:
     if opts.remove_apps is not None:
         return list(opts.remove_apps)
@@ -361,15 +423,15 @@ def _run_sync(order: int, path: str, description: str) -> list:
     ]
 
 
-def generate_autounattend(edition: Edition, opts: BuildOptions, apps_to_remove: list) -> str:
-    """Answer file for an unattended UEFI install of the single exported edition."""
-    del apps_to_remove  # removal runs from the script, not from this XML
+def generate_autounattend(edition: Edition, opts: BuildOptions) -> str:
+    """Answer file for the single exported edition. App removal lives in the setup script."""
     locale = opts.locale or edition.lang or "en-US"
     keyboard_default, timezone_default = _locale_defaults(locale)
     keyboard = opts.keyboard or keyboard_default
     timezone = opts.timezone or timezone_default
     username = opts.local_username or "User"
     arch = _arch(edition)
+    disk_config = _WIPE_DISK0 if opts.wipe_disk else []
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
         f'<unattend xmlns="{_UNATTEND_NS}" xmlns:wcm="{_WCM_NS}">',
@@ -384,49 +446,7 @@ def generate_autounattend(edition: Edition, opts: BuildOptions, apps_to_remove: 
         f"      <UserLocale>{_xml_escape(locale)}</UserLocale>",
         "    </component>",
         _component_open("Microsoft-Windows-Setup", arch),
-        '      <DiskConfiguration>',
-        '        <Disk wcm:action="add">',
-        "          <DiskID>0</DiskID>",
-        "          <WillWipeDisk>true</WillWipeDisk>",
-        "          <CreatePartitions>",
-        '            <CreatePartition wcm:action="add">',
-        "              <Order>1</Order>",
-        "              <Type>EFI</Type>",
-        "              <Size>260</Size>",
-        "            </CreatePartition>",
-        '            <CreatePartition wcm:action="add">',
-        "              <Order>2</Order>",
-        "              <Type>MSR</Type>",
-        "              <Size>128</Size>",
-        "            </CreatePartition>",
-        '            <CreatePartition wcm:action="add">',
-        "              <Order>3</Order>",
-        "              <Type>Primary</Type>",
-        "              <Extend>true</Extend>",
-        "            </CreatePartition>",
-        "          </CreatePartitions>",
-        "          <ModifyPartitions>",
-        '            <ModifyPartition wcm:action="add">',
-        "              <Order>1</Order>",
-        "              <PartitionID>1</PartitionID>",
-        "              <Format>FAT32</Format>",
-        "              <Label>System</Label>",
-        "            </ModifyPartition>",
-        '            <ModifyPartition wcm:action="add">',
-        "              <Order>2</Order>",
-        "              <PartitionID>2</PartitionID>",
-        "            </ModifyPartition>",
-        '            <ModifyPartition wcm:action="add">',
-        "              <Order>3</Order>",
-        "              <PartitionID>3</PartitionID>",
-        "              <Format>NTFS</Format>",
-        "              <Label>Windows</Label>",
-        "              <Letter>C</Letter>",
-        "            </ModifyPartition>",
-        "          </ModifyPartitions>",
-        "        </Disk>",
-        "        <WillShowUI>OnError</WillShowUI>",
-        "      </DiskConfiguration>",
+        *disk_config,
         "      <ImageInstall>",
         "        <OSImage>",
         "          <InstallFrom>",
@@ -435,16 +455,14 @@ def generate_autounattend(edition: Edition, opts: BuildOptions, apps_to_remove: 
         f"              <Value>{_xml_escape(edition.name)}</Value>",
         "            </MetaData>",
         "          </InstallFrom>",
-        "          <InstallTo>",
-        "            <DiskID>0</DiskID>",
-        "            <PartitionID>3</PartitionID>",
-        "          </InstallTo>",
-        "          <InstallToAvailablePartition>false</InstallToAvailablePartition>",
+        *_INSTALL_TO,
         "          <WillShowUI>OnError</WillShowUI>",
         "        </OSImage>",
         "      </ImageInstall>",
         "      <UserData>",
     ]
+    if not opts.wipe_disk:
+        lines = [line for line in lines if line not in _INSTALL_TO]
     key = _product_key(edition)
     if key:
         lines += [
@@ -544,14 +562,11 @@ def generate_autounattend(edition: Edition, opts: BuildOptions, apps_to_remove: 
         f"            <DisplayName>{_xml_escape(username)}</DisplayName>",
         "            <Group>Administrators</Group>",
     ]
-    if opts.local_password:
-        lines += [
-            "            <Password>",
-            f"              <Value>{_xml_escape(opts.local_password)}</Value>",
-            "              <PlainText>true</PlainText>",
-            "            </Password>",
-        ]
     lines += [
+        "            <Password>",
+        f"              <Value>{_xml_escape(opts.local_password)}</Value>",
+        "              <PlainText>true</PlainText>",
+        "            </Password>",
         "          </LocalAccount>",
         "        </LocalAccounts>",
         "      </UserAccounts>",
@@ -560,14 +575,11 @@ def generate_autounattend(edition: Edition, opts: BuildOptions, apps_to_remove: 
         f"        <Username>{_xml_escape(username)}</Username>",
         "        <LogonCount>1</LogonCount>",
     ]
-    if opts.local_password:
-        lines += [
-            "        <Password>",
-            f"          <Value>{_xml_escape(opts.local_password)}</Value>",
-            "          <PlainText>true</PlainText>",
-            "        </Password>",
-        ]
     lines += [
+        "        <Password>",
+        f"          <Value>{_xml_escape(opts.local_password)}</Value>",
+        "          <PlainText>true</PlainText>",
+        "        </Password>",
         "      </AutoLogon>",
         "      <FirstLogonCommands>",
         '        <SynchronousCommand wcm:action="add">',
@@ -666,6 +678,8 @@ def generate_setup_script(apps_to_remove: list, remove_onedrive: bool, remove_ed
             "    if (Test-Path $hive) {",
             "        & reg.exe load 'HKU\\TuxDefault' $hive | Out-Null",
         ]
+        if remove_onedrive:
+            lines.append("        & reg.exe delete 'HKU\\TuxDefault\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' /v OneDriveSetup /f 2>$null | Out-Null")
         for subkey, name, data in _USER_HIVE_TWEAKS:
             lines.append(
                 "        & reg.exe add " + _ps_quote("HKU\\TuxDefault\\" + subkey)
@@ -701,22 +715,10 @@ def generate_setup_script(apps_to_remove: list, remove_onedrive: bool, remove_ed
         "    Get-ChildItem 'C:\\Drivers' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { Log ('DRIVER_FILE ' + $_.FullName) }",
         "} else { Log 'DRIVER_FILE none' }",
         "Log ('PHASE_END ' + $Phase)",
-        "$reportText = $log -join \"`r`n\"",
-        "$reportText | Out-File -FilePath \"$env:SystemDrive\\tuxutil-report.txt\" -Encoding UTF8",
-        "$localLog = Join-Path $env:SystemRoot 'Setup\\Scripts\\tuxutil-log.txt'",
-        "$reportText | Out-File -FilePath $localLog -Encoding UTF8",
-        "$drives = Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne 'C' }",
-        "foreach ($drv in $drives) {",
-        "    $letter = $drv.DriveLetter",
-        "    try {",
-        "        $reportText | Out-File -FilePath \"${letter}:\\tuxutil-report.txt\" -Encoding UTF8 -ErrorAction Stop",
-        "    } catch {}",
-        "}",
-        "foreach ($letter in [char[]](68..90)) {",
-        "    $root = \"${letter}:\\\"",
-        "    if (Test-Path $root) {",
-        "        try { $reportText | Out-File -FilePath ($root + 'tuxutil-report.txt') -Encoding UTF8 -ErrorAction Stop } catch {}",
-        "    }",
+        "$log -join \"`r`n\" | Out-File -FilePath (Join-Path $env:SystemRoot 'Setup\\Scripts\\tuxutil-log.txt') -Encoding UTF8 -Append",
+        # The answer file holds the account password in plain text.
+        "if ($Phase -eq 'FirstLogon') {",
+        "    Remove-Item -Force -ErrorAction SilentlyContinue \"$env:SystemRoot\\Panther\\unattend*.xml\", \"$env:SystemRoot\\Panther\\Unattend\\*.xml\"",
         "}",
         "exit 0",
     ]
@@ -792,7 +794,6 @@ def _xorriso_argv(extract_dir: str, output_path: str, label: str, uefi_rel: str)
         "-b", "boot/etfsboot.com",
         "-no-emul-boot",
         "-boot-load-size", "8",
-        "-boot-info-table",
         "-eltorito-alt-boot",
         "-e", uefi_rel,
         "-no-emul-boot",
@@ -889,10 +890,9 @@ def _publish_or_split(src: str, sources: str, single_name: str):
 
 def _get_editions(iso_path: str) -> list:
     """Extract only the install image onto scratch (never /tmp; that is RAM)."""
-    dest = os.path.join(_scratch_dir(), "info-wim")
-    if os.path.exists(dest):
-        shutil.rmtree(dest)
-    os.makedirs(dest)
+    cache = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "tuxutil")
+    os.makedirs(cache, exist_ok=True)
+    dest = tempfile.mkdtemp(prefix="winiso-info-", dir=cache)  # not /tmp: often RAM, and this is ~8 GB
     try:
         for name in ("sources/install.wim", "sources/install.esd"):
             result = system.run(
@@ -915,6 +915,12 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     output_path = os.path.abspath(output_path)
     if iso_path == output_path:
         raise SystemExit("Output path must be different from input ISO path.")
+    _validate_username(opts.local_username or "User")
+    if system.DRY_RUN:
+        # ponytail: later steps depend on real files, so dry-run only states the plan.
+        print(f"Would build {output_path} from {iso_path}: extract with 7z, export one edition "
+              "with wimlib-imagex, add autounattend.xml, write the ISO with xorriso.")
+        return
     system.require_tools(REQUIRED_TOOLS)
     _validate_iso(iso_path)
     for directory in opts.driver_dirs or []:
@@ -923,11 +929,11 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     if opts.compression not in ("solid", "lzx", "none"):
         raise SystemExit(f"Unknown compression: {opts.compression}")
 
-    work_dir = _scratch_dir(work_dir)
-    _check_disk_space(work_dir, iso_path)
     parent = os.path.dirname(output_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
+    os.makedirs(parent, exist_ok=True)
+    work_dir = os.path.abspath(work_dir or output_path + ".work")
+    os.makedirs(work_dir, exist_ok=True)
+    _check_disk_space(work_dir, iso_path)
     extract_dir = os.path.join(work_dir, "extract")
     if os.path.commonpath([os.path.abspath(extract_dir), output_path]) == os.path.abspath(extract_dir):
         raise SystemExit("Output path must not be inside the work extract directory.")
@@ -937,7 +943,7 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     state = {"output": False}
 
     def _fail_cleanup():
-        shutil.rmtree(extract_dir, ignore_errors=True)
+        shutil.rmtree(work_dir, ignore_errors=True)
         if state["output"] and os.path.isfile(output_path):
             try:
                 os.remove(output_path)
@@ -1021,7 +1027,7 @@ def _do_build(iso_path, output_path, opts, work_dir, extract_dir, state):
     system.progress(68, "Writing autounattend.xml...")
     xml_path = os.path.join(extract_dir, "autounattend.xml")
     with open(xml_path, "w", encoding="utf-8", newline="\r\n") as handle:
-        handle.write(generate_autounattend(edition, opts, apps))
+        handle.write(generate_autounattend(edition, opts))
     if edition.edition_id:
         ei = os.path.join(sources, "ei.cfg")
         with open(ei, "w", encoding="ascii", newline="") as handle:
@@ -1044,8 +1050,7 @@ def _do_build(iso_path, output_path, opts, work_dir, extract_dir, state):
     state["output"] = False
 
     system.progress(95, "Cleaning up...")
-    shutil.rmtree(extract_dir, ignore_errors=True)
-    shutil.rmtree(check_dir, ignore_errors=True)
+    shutil.rmtree(work_dir, ignore_errors=True)
     output_size = os.path.getsize(output_path)
     system.progress(100, f"Done. {output_path} ({output_size / (1024 ** 3):.2f} GB)")
     print(
@@ -1056,18 +1061,17 @@ def _do_build(iso_path, output_path, opts, work_dir, extract_dir, state):
     )
 
 
-def _csv(value):
-    if not value:
-        return None
-    parts = [part for part in str(value).split(",") if part]
+def _flat(values):
+    """Flatten repeated flags, each of which may itself be comma-separated."""
+    parts = [part for value in values or [] for part in str(value).split(",") if part]
     return parts or None
 
 
 def options_from_args(args) -> BuildOptions:
     return BuildOptions(
         edition=args.edition or "",
-        remove_apps=_csv(args.remove_apps) if args.remove_apps is not None else None,
-        keep_apps=_csv(args.keep_apps) if args.keep_apps is not None else None,
+        remove_apps=_flat(args.remove_apps),
+        keep_apps=_flat(args.keep_apps),
         remove_onedrive=not args.no_remove_onedrive,
         remove_edge=bool(args.remove_edge),
         apply_tweaks=not args.no_tweaks,
@@ -1077,10 +1081,11 @@ def options_from_args(args) -> BuildOptions:
         locale=args.locale or "",
         keyboard=args.keyboard or "",
         timezone=args.timezone or "",
-        driver_dirs=_csv(args.drivers),
+        driver_dirs=_flat(args.drivers),
         disable_hibernation=not args.no_disable_hibernation,
         compact_os=bool(args.compact_os),
         compression=args.compression,
+        wipe_disk=bool(args.wipe_disk),
     )
 
 
@@ -1090,11 +1095,11 @@ def _option_table():
          "help": "Edition to keep (name or index). Default: Pro if present, else first.",
          "default": "", "choices": []},
         {"flag": "--remove-apps", "type": "list", "label": "Apps to Remove",
-         "help": "Comma-separated app package names to remove. Default: common bloatware.",
-         "default": ",".join(name for name, default in BLOAT_APPS if default)},
+         "help": "App package names to remove. Replaces the default bloat list when set.",
+         "default": [name for name, default in BLOAT_APPS if default]},
         {"flag": "--keep-apps", "type": "list", "label": "Apps to Keep",
-         "help": "Comma-separated apps to keep even if in the default removal list.",
-         "default": ""},
+         "help": "Apps to keep even if in the default removal list.",
+         "default": []},
         {"flag": "--no-remove-onedrive", "type": "bool", "label": "Keep OneDrive",
          "help": "Don't remove OneDrive.", "default": False},
         {"flag": "--remove-edge", "type": "bool", "label": "Remove Edge",
@@ -1106,7 +1111,8 @@ def _option_table():
         {"flag": "--username", "type": "str", "label": "Local Username",
          "help": "Local account username (default: User).", "default": "User"},
         {"flag": "--password", "type": "str", "label": "Local Password",
-         "help": "Local account password (optional). Never printed.", "default": ""},
+         "help": "Optional. Stored in plain text on the ISO until first logon, so keep the ISO private.",
+         "default": ""},
         {"flag": "--locale", "type": "str", "label": "Locale",
          "help": "System locale (e.g. en-US). Default: from the source image.", "default": ""},
         {"flag": "--keyboard", "type": "str", "label": "Keyboard Layout",
@@ -1114,11 +1120,14 @@ def _option_table():
         {"flag": "--timezone", "type": "str", "label": "Timezone",
          "help": "Windows timezone name. Default: inferred from the source language.", "default": ""},
         {"flag": "--drivers", "type": "list", "label": "Driver Directories",
-         "help": "Comma-separated directories of .inf drivers.", "default": ""},
+         "help": "Directories of .inf drivers.", "default": []},
         {"flag": "--no-disable-hibernation", "type": "bool", "label": "Keep Hibernation",
          "help": "Don't disable hibernation.", "default": False},
         {"flag": "--compact-os", "type": "bool", "label": "Compact OS",
          "help": "Enable Compact OS during install.", "default": False},
+        {"flag": "--wipe-disk", "type": "bool", "label": "Fully Unattended: ERASE Disk 0",
+         "help": "DANGER: erases disk 0 with no prompt on any PC that boots this media. UEFI only. "
+                 "Off means Setup asks which disk to use.", "default": False},
         {"flag": "--compression", "type": "choice", "label": "Image Compression",
          "help": "solid (ESD/LZMS), lzx, or none. Files over 4GB are split into install*.swm.",
          "default": "solid", "choices": ["solid", "lzx", "none"]},
@@ -1177,8 +1186,8 @@ def register(sub):
     build.add_argument("iso", help="path to source Windows ISO")
     build.add_argument("-o", "--output", required=True, help="output ISO path")
     build.add_argument("--edition", default="", help="edition name or index")
-    build.add_argument("--remove-apps", default=None, help="comma-separated app names to remove")
-    build.add_argument("--keep-apps", default=None, help="comma-separated apps to keep")
+    build.add_argument("--remove-apps", action="append", help="app name to remove; repeatable")
+    build.add_argument("--keep-apps", action="append", help="app name to keep; repeatable")
     build.add_argument("--no-remove-onedrive", action="store_true", help="keep OneDrive")
     build.add_argument("--remove-edge", action="store_true", help="remove Microsoft Edge")
     build.add_argument("--no-tweaks", action="store_true", help="skip registry tweaks")
@@ -1188,9 +1197,11 @@ def register(sub):
     build.add_argument("--locale", default="", help="system locale (e.g. en-US)")
     build.add_argument("--keyboard", default="", help="keyboard layout")
     build.add_argument("--timezone", default="", help="Windows timezone name")
-    build.add_argument("--drivers", default="", help="comma-separated driver directories")
+    build.add_argument("--drivers", action="append", help="driver directory; repeatable")
     build.add_argument("--no-disable-hibernation", action="store_true", help="keep hibernation enabled")
     build.add_argument("--compact-os", action="store_true", help="enable OS compaction")
+    build.add_argument("--wipe-disk", action="store_true",
+                       help="DANGER: erase disk 0 with no prompt on any PC that boots this media")
     build.add_argument("--compression", default="solid", choices=["solid", "lzx", "none"],
                        help="image compression method")
     build.add_argument("--work-dir", default=None, help="working directory for temp files")

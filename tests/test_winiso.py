@@ -4,6 +4,7 @@ import json
 import os
 import textwrap
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch, MagicMock
 
 from tuxutil import winiso
@@ -208,14 +209,14 @@ class TestAutounattendXml(unittest.TestCase):
         """Generated XML must be parseable."""
         import xml.etree.ElementTree as ET
         opts = winiso.BuildOptions(local_username="TestUser")
-        xml_str = winiso.generate_autounattend(self.edition, opts, ["Microsoft.BingNews"])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         # Should parse without error
         root = ET.fromstring(xml_str)
         self.assertEqual(root.tag, f"{{{winiso._UNATTEND_NS}}}unattend")
 
     def test_bypass_keys(self):
         opts = winiso.BuildOptions(bypass_requirements=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("BypassTPMCheck", xml_str)
         self.assertIn("BypassSecureBootCheck", xml_str)
         self.assertIn("BypassRAMCheck", xml_str)
@@ -223,12 +224,12 @@ class TestAutounattendXml(unittest.TestCase):
 
     def test_no_bypass(self):
         opts = winiso.BuildOptions(bypass_requirements=False)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertNotIn("BypassTPMCheck", xml_str)
 
     def test_local_account(self):
         opts = winiso.BuildOptions(local_username="Admin", local_password="Secret123")
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("<Name>Admin</Name>", xml_str)
         self.assertIn("HideOnlineAccountScreens", xml_str)
         self.assertIn("SkipMachineOOBE", xml_str)
@@ -236,7 +237,7 @@ class TestAutounattendXml(unittest.TestCase):
     def test_password_not_plaintext_in_attribute(self):
         """Password should appear in a Value element, not as a bare attribute."""
         opts = winiso.BuildOptions(local_password="My<Secret>&Pass\"")
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         # Should be XML-escaped
         self.assertIn("My&lt;Secret&gt;&amp;Pass&quot;", xml_str)
         # Should never appear unescaped
@@ -244,7 +245,7 @@ class TestAutounattendXml(unittest.TestCase):
 
     def test_username_escaping(self):
         opts = winiso.BuildOptions(local_username='User<>&"Name')
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("User&lt;&gt;&amp;&quot;Name", xml_str)
         # Verify the XML is still parseable
         import xml.etree.ElementTree as ET
@@ -253,70 +254,73 @@ class TestAutounattendXml(unittest.TestCase):
     def test_wcm_namespace(self):
         """Verify wcm namespace is properly declared."""
         opts = winiso.BuildOptions()
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn('xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"', xml_str)
 
     def test_wcm_action_attributes(self):
         opts = winiso.BuildOptions()
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn('wcm:action="add"', xml_str)
 
     def test_hibernation_disable(self):
         opts = winiso.BuildOptions(disable_hibernation=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("powercfg /h off", xml_str)
 
     def test_hibernation_keep(self):
         opts = winiso.BuildOptions(disable_hibernation=False)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertNotIn("powercfg", xml_str)
 
     def test_compact_os(self):
         opts = winiso.BuildOptions(compact_os=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("compact /compactos:always", xml_str)
 
     def test_locale(self):
         opts = winiso.BuildOptions(locale="de-DE", keyboard="0407:00000407",
                                    timezone="W. Europe Standard Time")
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("de-DE", xml_str)
         self.assertIn("0407:00000407", xml_str)
         self.assertIn("W. Europe Standard Time", xml_str)
 
-    def test_disk_configuration(self):
-        """Must have UEFI GPT disk partitioning."""
-        opts = winiso.BuildOptions(bypass_requirements=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+    def test_default_never_touches_a_disk(self):
+        xml_str = winiso.generate_autounattend(self.edition, winiso.BuildOptions())
+        for forbidden in ("DiskConfiguration", "WillWipeDisk", "<InstallTo>", "InstallToAvailablePartition"):
+            self.assertNotIn(forbidden, xml_str)
+        ET.fromstring(xml_str)
+
+    def test_wipe_disk_is_opt_in(self):
+        xml_str = winiso.generate_autounattend(self.edition, winiso.BuildOptions(wipe_disk=True))
+        self.assertIn("<WillWipeDisk>true</WillWipeDisk>", xml_str)
         self.assertIn("<Type>EFI</Type>", xml_str)
-        self.assertIn("<Type>MSR</Type>", xml_str)
-        self.assertIn("<Type>Primary</Type>", xml_str)
-        self.assertIn("<Format>FAT32</Format>", xml_str)
-        self.assertIn("<Format>NTFS</Format>", xml_str)
+        self.assertIn("<PartitionID>3</PartitionID>", xml_str)
+        ET.fromstring(xml_str)
 
     def test_all_passes_present(self):
         """Must have windowsPE, specialize, and oobeSystem passes."""
         opts = winiso.BuildOptions(bypass_requirements=True, apply_tweaks=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn('pass="windowsPE"', xml_str)
         self.assertIn('pass="specialize"', xml_str)
         self.assertIn('pass="oobeSystem"', xml_str)
 
     def test_firstlogon_script(self):
         opts = winiso.BuildOptions()
-        xml_str = winiso.generate_autounattend(self.edition, opts, ["Microsoft.BingNews"])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("tuxutil-setup.ps1", xml_str)
 
     def test_registry_tweaks(self):
         opts = winiso.BuildOptions(apply_tweaks=True)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertIn("AllowTelemetry", xml_str)
         self.assertIn("TurnOffWindowsCopilot", xml_str)
         self.assertIn("DisableAIDataAnalysis", xml_str)
 
     def test_no_tweaks(self):
         opts = winiso.BuildOptions(apply_tweaks=False)
-        xml_str = winiso.generate_autounattend(self.edition, opts, [])
+        xml_str = winiso.generate_autounattend(self.edition, opts)
         self.assertNotIn("AllowTelemetry", xml_str)
 
 
@@ -351,13 +355,19 @@ class TestSetupScript(unittest.TestCase):
 
     def test_report_generation(self):
         script = winiso.generate_setup_script(["X"], remove_onedrive=False, remove_edge=False)
-        self.assertIn("tuxutil-report.txt", script)
+        self.assertIn("tuxutil-log.txt", script)
         self.assertIn("Get-AppxProvisionedPackage", script)
 
-    def test_secondary_drive_report(self):
-        """Script should try to write report to secondary drives for test extraction."""
-        script = winiso.generate_setup_script([], remove_onedrive=False, remove_edge=False)
-        self.assertIn("Get-Volume", script)
+    def test_report_never_written_to_other_drives(self):
+        script = winiso.generate_setup_script(["Microsoft.BingNews"], True, False)
+        self.assertNotIn("Get-Volume", script)
+        self.assertNotIn("[char[]]", script)
+        self.assertIn("tuxutil-log.txt", script)
+
+    def test_first_logon_removes_answer_file(self):
+        script = winiso.generate_setup_script([], False, False)
+        self.assertIn("Panther", script)
+        self.assertIn("unattend*.xml", script)
 
 
 class TestBuildOptions(unittest.TestCase):
@@ -553,7 +563,7 @@ class TestLocaleDefaults(unittest.TestCase):
             index=6, name="Windows 11 Pro", arch="x86_64",
             size_bytes=1, build="26300.9457", edition_id="Professional", lang="en-GB",
         )
-        xml_str = winiso.generate_autounattend(edition, winiso.BuildOptions(), [])
+        xml_str = winiso.generate_autounattend(edition, winiso.BuildOptions())
         self.assertIn("en-GB", xml_str)
         self.assertIn("0809:00000809", xml_str)
         self.assertIn("GMT Standard Time", xml_str)

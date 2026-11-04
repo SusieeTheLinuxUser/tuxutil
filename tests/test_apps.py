@@ -164,14 +164,15 @@ class DryRunTest(unittest.TestCase):
         assert_flatpak_unprivileged(self, out)
 
     def test_remove_flatpak_is_per_user(self):
-        with as_family("arch"):
+        with as_family("arch"), mock.patch.object(apps, "installed_names", return_value=(set(), set())):
             rc, out, _ = invoke(["--dry-run", "apps", "remove", "spotify"])
         self.assertEqual(rc, 0)
         self.assertEqual(commands(out), [["flatpak", "uninstall", "-y", "com.spotify.Client"]])
         assert_flatpak_unprivileged(self, out)
 
     def test_remove_uses_the_remove_command(self):
-        with as_family("fedora"):
+        installed = ({"moby-engine", "docker-cli"}, set())
+        with as_family("fedora"), mock.patch.object(apps, "installed_names", return_value=installed):
             rc, out, _ = invoke(["--dry-run", "apps", "remove", "docker"])
         self.assertEqual(rc, 0)
         self.assertEqual(commands(out), [["dnf", "remove", "-y", "moby-engine", "docker-cli"]])
@@ -310,9 +311,26 @@ class InstalledNamesTest(unittest.TestCase):
         rows = "installed vlc\nconfig-files gimp\nnot-installed foo\n"
         done = subprocess.CompletedProcess([], 0, rows, "")
         fail = subprocess.CompletedProcess([], 1, "", "")
-        with mock.patch.object(system, "query", side_effect=[done, fail]):
+        with mock.patch.object(system, "query", side_effect=[done, fail]) as query:
             native, _ = apps.installed_names("debian")
         self.assertEqual(native, {"vlc"})
+        self.assertEqual(query.call_args_list[0].args[0][:2], ["dpkg-query", "-W"])
+        self.assertIn("${db:Status-Status}", query.call_args_list[0].args[0][3])
+        self.assertEqual(query.call_args_list[1].args[0][:2], ["flatpak", "list"])
+
+    def test_failed_query_stops_removal(self):
+        fail = subprocess.CompletedProcess([], 1, "", "")
+        with mock.patch.object(system, "query", return_value=fail), mock.patch.object(system, "run") as run:
+            with as_family("arch"), self.assertRaises(SystemExit):
+                apps.cmd_remove(mock.Mock(ids=["firefox"]))
+        run.assert_not_called()
+
+    def test_missing_flatpak_does_not_stop_removal(self):
+        done = subprocess.CompletedProcess([], 0, "firefox\n", "")
+        fail = subprocess.CompletedProcess([], 127, "", "")
+        with mock.patch.object(system, "query", side_effect=[done, fail]), \
+                mock.patch.object(apps.shutil, "which", return_value=None):
+            self.assertEqual(apps.installed_names("arch", strict=True), ({"firefox"}, set()))
 
 
 if __name__ == "__main__":

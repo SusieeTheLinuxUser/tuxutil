@@ -45,7 +45,7 @@ If the stick stays first in the boot order, the PC goes back into Setup after th
 
 ### Custom Linux ISO
 
-No root needed, as long as user namespaces, `/etc/subuid` and `newuidmap` are set up. It edits the live system of an existing ISO.
+No root needed, as long as user namespaces, `/etc/subuid`, `/etc/subgid`, `newuidmap` and `newgidmap` are set up. It edits the live system of an existing ISO.
 
 `--add-pkg` and `--remove-pkg` run the ISO's own package manager and scripts with access to your user's files, so only use them on ISOs you trust.
 

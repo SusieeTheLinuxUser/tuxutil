@@ -486,23 +486,11 @@ def prepare_for_write(iso, device, confirm):
 def root_argv(iso, device, confirm, no_verify=False):
     """Argv of the root-side writer.
 
-    pkexec keeps argv and drops the environment, including PYTHONPATH, so a
-    checkout is invisible to ``python -m tuxutil``. The ``-c`` script inserts
-    the absolute directory that contains the tuxutil package. The test-file
-    switch is intentionally not passed: the root process must not enter it.
+    The test-file switch is intentionally not passed: the root process must not enter it.
     ponytail: this assumes pkexec preserves argv. A polkit rule that only
     allows a packaged console helper would need that helper instead.
     """
-    exe = system.self_cmd()[0]
-    parent = str(Path(__file__).resolve().parent.parent)
-    code = (
-        "import sys; "
-        f"sys.path.insert(0, {parent!r}); "
-        "sys.argv = ['tuxutil', *sys.argv[1:]]; "
-        "from tuxutil.cli import main; "
-        "raise SystemExit(main())"
-    )
-    argv = [exe, "-c", code, "flash", "_write", str(Path(iso).resolve()), device, "--confirm", confirm]
+    argv = [*system.self_cmd(), "flash", "_write", str(Path(iso).resolve()), device, "--confirm", confirm]
     if no_verify:
         argv.append("--no-verify")
     return argv

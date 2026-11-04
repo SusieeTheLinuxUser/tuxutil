@@ -387,11 +387,11 @@ class WriteGuardTest(unittest.TestCase):
         argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", no_verify=True)
         parent = str(Path(flash.__file__).resolve().parent.parent)
         self.assertEqual(argv[0], system.self_cmd()[0])
-        self.assertEqual(argv[1], "-c")
-        self.assertIn(parent, argv[2])
+        self.assertEqual(argv[1:3], ["-I", "-c"])
+        self.assertIn(parent, argv[3])
         self.assertNotIn("PYTHONPATH", " ".join(argv))
         self.assertNotIn(flash.TEST_ENV, " ".join(argv))
-        self.assertEqual(argv[3:6], ["flash", "_write", str(Path("/tmp/x.iso").resolve())])
+        self.assertEqual(argv[4:7], ["flash", "_write", str(Path("/tmp/x.iso").resolve())])
         self.assertIn("--confirm", argv)
         self.assertIn("--no-verify", argv)
         self.assertEqual(argv.count("/dev/sdb"), 2)
@@ -403,10 +403,28 @@ class WriteGuardTest(unittest.TestCase):
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
         proc = subprocess.run(
-            [*argv[:3], "--version"], cwd="/", env=env, capture_output=True, text=True, check=False,
+            [*argv[:4], "--version"], cwd="/", env=env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(__version__, proc.stdout)
+
+    def test_root_argv_ignores_hostile_files_in_the_current_folder(self):
+        """sudo and doas keep the caller's folder, so a json.py there would otherwise run as root."""
+        argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb")
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "ran"
+            (Path(tmp) / "json.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            (Path(tmp) / "argparse.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            # PYTHONPATH=. reaches the child under sudo -E or env_keep, and comes back as an absolute path.
+            for pythonpath in (None, ".", tmp):
+                env = os.environ.copy()
+                env.pop("PYTHONPATH", None)
+                if pythonpath:
+                    env["PYTHONPATH"] = pythonpath
+                proc = subprocess.run([*argv[:4], "--version"], cwd=tmp, env=env, capture_output=True, text=True, check=False)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn(__version__, proc.stdout)
+                self.assertFalse(marker.exists(), pythonpath)
 
     def test_mode_prefers_hybrid_raw(self):
         self.assertEqual(flash.mode_from_flags(True, True), "raw")

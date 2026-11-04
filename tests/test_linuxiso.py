@@ -1,7 +1,9 @@
 import json
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 
 from tuxutil import linuxiso
 from tuxutil.cli import main
@@ -83,6 +85,44 @@ class BootTextTest(unittest.TestCase):
     def test_label_rewrite(self):
         out = linuxiso.patch_boot_text("root=live:CDLABEL=OLD\n", old_label="OLD", new_label="NEW")
         self.assertEqual(out, "root=live:CDLABEL=NEW\n")
+
+
+class MisoTest(unittest.TestCase):
+    def test_kernels_cfg_gets_args_and_bare_timeout_changes(self):
+        self.assertTrue(linuxiso.is_boot_config("/boot/grub/kernels.cfg"))
+        text = linuxiso.patch_boot_text("linux /boot/vmlinuz-$2 driver=free\n", kernel_args=["console=ttyS0"])
+        self.assertIn("driver=free console=ttyS0", text)
+        self.assertEqual(linuxiso.patch_boot_text("timeout=10\n", timeout=2), "timeout=2\n")
+
+
+class CmdlineTest(unittest.TestCase):
+    def test_args_go_before_separator_at_start_or_middle(self):
+        self.assertEqual(linuxiso._append_cmdline("--- quiet", ["a=1"]), "a=1 --- quiet")
+        self.assertEqual(linuxiso._append_cmdline("quiet --", ["a=1"]), "quiet a=1 --")
+        self.assertEqual(linuxiso._append_cmdline("quiet", ["a=1"]), "quiet a=1")
+
+
+class FirstBootTest(unittest.TestCase):
+    def test_unit_is_enabled_and_preset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root, script = Path(folder, "root"), Path(folder, "s.sh")
+            script.write_text("#!/bin/sh\n")
+            linuxiso._install_first_boot(root, script)
+            self.assertTrue((root / "etc/systemd/system/multi-user.target.wants/tuxutil-firstboot.service").is_symlink())
+            self.assertIn("enable tuxutil-firstboot.service",
+                          (root / "etc/systemd/system-preset/00-tuxutil.preset").read_text())
+
+
+class SelinuxTest(unittest.TestCase):
+    def test_only_enforcing_counts(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertFalse(linuxiso._selinux_enforcing(root))
+            config = Path(root) / "etc/selinux/config"
+            config.parent.mkdir(parents=True)
+            config.write_text("# SELINUX=enforcing\nSELINUX=disabled\n")
+            self.assertFalse(linuxiso._selinux_enforcing(root))
+            config.write_text("SELINUX=enforcing\nSELINUXTYPE=targeted\n")
+            self.assertTrue(linuxiso._selinux_enforcing(root))
 
 
 class IsoMetadataTest(unittest.TestCase):

@@ -416,7 +416,7 @@ def is_boot_config(path):
     if "/loader/entries/" in low and name.endswith(".conf"):
         return True
     if name in {"grub.cfg", "loopback.cfg", "isolinux.cfg", "syslinux.cfg", "txt.cfg",
-                "menu.cfg", "loader.conf", "grub.conf"}:
+                "menu.cfg", "loader.conf", "grub.conf", "kernels.cfg", "variable.cfg"}:
         return True
     if ("/syslinux/" in low or "/isolinux/" in low) and name.endswith(".cfg"):
         return True
@@ -486,9 +486,9 @@ def _append_cmdline(body, args):
     addition = " ".join(extra)
     # The kernel stops reading its own arguments at "--", and "---" marks the same
     # spot for Debian-style installers. Ours have to go before either.
-    sep = re.search(r"\s--(-)?(\s|$)", body)
+    sep = re.search(r"(?:^|(?<=\s))---?(\s|$)", body)
     if sep:
-        return body[:sep.start()].rstrip() + " " + addition + body[sep.start():]
+        return f"{body[:sep.start()].rstrip()} {addition} {body[sep.start():]}".lstrip()
     if body.strip() == "":
         return addition
     return body.rstrip() + " " + addition
@@ -504,8 +504,9 @@ def _set_timeout(text, seconds, kind):
         if re.search(r"(?m)^\s*timeout\s+\S+", text):
             return re.sub(r"(?m)^(\s*timeout\s+)\S+", rf"\g<1>{seconds}", text)
         return f"timeout {seconds}\n" + text
-    if re.search(r"(?m)^\s*set\s+timeout=", text):
-        return re.sub(r"(?m)^(\s*set\s+timeout=)\S+", rf"\g<1>{seconds}", text)
+    # Manjaro's variable.cfg has a bare `timeout=10` that runs after any `set timeout=`.
+    if re.search(r"(?m)^\s*(?:set\s+)?timeout=", text):
+        return re.sub(r"(?m)^(\s*(?:set\s+)?timeout=)\S+", rf"\g<1>{seconds}", text)
     return f"set timeout={seconds}\n" + text
 
 
@@ -546,8 +547,8 @@ def update_md5sum(text, updates):
     return ("\n".join(lines) + "\n") if lines else ""
 
 
-def format_sha512(digest, basename):
-    # archiso checks `sha512sum` output: hex, two spaces, filename.
+def format_checksum(digest, basename):
+    # `sha512sum`/`md5sum` output: hex, two spaces, filename.
     return f"{digest}  {basename}\n"
 
 
@@ -767,10 +768,18 @@ def inner_build(args, scratch):
         root, repack = _materialize(iso, info, scratch)
         if _is_immutable_root(root):
             raise SystemExit("This live image is an immutable ostree system. Refusing to modify it.")
-        if args.first_boot and not _has_systemd(root):
+        # A layered image's top layer holds only its changes, so systemd is in a lower one.
+        if args.first_boot and len(info.get("layers") or []) <= 1 and not _has_systemd(root):
             raise SystemExit("This live image has no systemd, so --first-boot cannot be installed. "
                              "info notes should mention that for non-systemd images; this one has no "
                              "/usr/lib/systemd/systemd.")
+
+        upper = [p for p in paths if p.endswith(".sfs") and p != info["squashfs"]
+                 and Path(p).parent == Path(info["squashfs"]).parent]
+        if upper:
+            # ponytail: miso stacks these above the root we edit. Edit the top layer if that matters.
+            _warn(f"Files also in {', '.join(Path(p).name for p in upper)} override your overlay and "
+                  "hostname on the live system.")
 
         system.progress(40, "applying overlay, hostname, first boot")
         _apply_identity(root, args)
@@ -782,6 +791,14 @@ def inner_build(args, scratch):
             _run_packages(root, pkg_family, args.add_pkg or [], args.remove_pkg or [], mounts)
 
         _umount_children(root, mounts)
+        if args.hostname and info["squashfs"].startswith("/casper/"):
+            # casper writes its own hostname at boot unless this is set.
+            args.kernel_arg = [*(args.kernel_arg or []), f"hostname={args.hostname}"]
+        if _selinux_enforcing(root):
+            # ponytail: labels can't be written without root and PID 1 dies without them.
+            # Restore them with mkfs.erofs --file-contexts where it is built with SELinux.
+            _warn("SELinux labels can't be kept without root, so this ISO boots with selinux=0.")
+            args.kernel_arg = [*(args.kernel_arg or []), "selinux=0"]
 
         system.progress(70, "repacking root filesystem")
         built = _repack(repack, scratch, args.compression)
@@ -863,6 +880,11 @@ def _unpack_squash(image, dest):
     listing = subprocess.run(["unsquashfs", "-lln", str(image)], stdout=subprocess.PIPE, errors="replace", check=False)
     comp, block = _squash_info(image)
     return device_pseudo(listing.stdout), comp, block
+
+
+def _selinux_enforcing(root):
+    config = Path(root) / "etc/selinux/config"
+    return config.is_file() and bool(re.search(r"(?m)^SELINUX=enforcing\b", config.read_text(errors="replace")))
 
 
 def _unpack_erofs(image, dest):
@@ -1002,6 +1024,10 @@ def _install_first_boot(root, script):
     if link.is_symlink() or link.exists():
         link.unlink()
     link.symlink_to("/etc/systemd/system/tuxutil-firstboot.service")
+    # Fedora applies presets on first boot, and its default is `disable *`.
+    presets = root / "etc/systemd/system-preset"
+    presets.mkdir(parents=True, exist_ok=True)
+    (presets / "00-tuxutil.preset").write_text("enable tuxutil-firstboot.service\n")
 
 
 def _has_systemd(root):
@@ -1207,12 +1233,14 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
             _warn(f"{path} embeds the old label {label!r} and was left unchanged.")
 
     primary = info["squashfs"]
-    if info["family"] == "arch":
-        # archiso checks `sha512sum` output against this file when asked to.
-        for sha_iso in (p for p in paths if p == str(Path(primary).parent / "airootfs.sha512")):
-            sha_host = work / "airootfs.sha512"
-            sha_host.write_text(format_sha512(_hash_file(built, "sha512"), Path(primary).name))
-            iso_to_host[sha_iso] = sha_host
+    # archiso and miso compare these against the image at boot when `checksum=y`.
+    # A stale one powers the machine off (Garuda sets checksum=y by default).
+    for suffix, kind in ((".sha512", "sha512"), (".md5", "md5")):
+        sum_path = _sibling(paths, primary, suffix)
+        if sum_path:
+            host = work / Path(sum_path).name
+            host.write_text(format_checksum(_hash_file(built, kind), Path(primary).name))
+            iso_to_host[sum_path] = host
     size_path = _sibling(paths, primary, ".size")
     if size_path:
         # filesystem.size is the unpacked byte size casper shows while copying.

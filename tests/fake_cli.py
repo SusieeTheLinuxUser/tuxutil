@@ -459,6 +459,18 @@ def main():
             print("Flash completed and verified successfully. Write operation complete.", flush=True)
             return 0
 
+    if cmd == "iso":
+        if args[1] == "list":
+            print(json.dumps([
+                {"id": "arch", "name": "Arch Linux", "kind": "linux", "direct": True, "page": "https://example.test/arch", "notes": ""},
+                {"id": "win11", "name": "Windows 11", "kind": "windows", "direct": False,
+                 "page": "https://example.test/win", "notes": "Links expire."},
+            ]))
+            return 0
+        emit_progress([(50, "Downloading")])
+        print("@saved /fake/path/archlinux-live.iso", flush=True)
+        return 0
+
     if cmd == "test-long":
         # Simulates a slow long job to test cancellation and progress updates
         delay = float(args[1]) if len(args) > 1 else 0.5

@@ -22,6 +22,8 @@ tuxutil linuxiso info ISO --json
 tuxutil linuxiso build ISO -o OUT.iso [options]
 tuxutil flash list --json
 tuxutil flash write ISO DEVICE --confirm DEVICE [--no-verify]
+tuxutil iso list --json
+tuxutil iso download [TARGET] [-o FILE | --dir DIR] [--sha256 HEX]    (no TARGET: reads $TUXUTIL_DOWNLOAD_URL)
 tuxutil gui
 ```
 Listing commands print exactly this JSON (extra keys are fine):
@@ -31,6 +33,7 @@ tweaks list:   [{"id","name","category","description","risk":"low|medium|high","
 winiso info:   {"editions":[{"index":int,"name","arch","size_bytes":int,"build"}]}
 linuxiso info: {"family","squashfs","label","arch","supported":bool,"notes"}
 flash list:    [{"path","model","size_bytes":int,"transport","removable":bool,"safe":bool,"reason"}]
+iso list:      [{"id","name","kind":"linux|windows","direct":bool,"page","notes"}]
 winiso options --json, linuxiso options --json:
                [{"flag":"--name","type":"bool|str|path|list|choice","label","help","default","choices":[...]}]
 ```

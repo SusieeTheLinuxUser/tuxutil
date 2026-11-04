@@ -162,7 +162,7 @@ def cmd_build(args):
         env = os.environ.copy()
         env["TUXUTIL_LINUXISO_INNER"] = "1"
         env["TUXUTIL_LINUXISO_SCRATCH"] = str(scratch)
-        cmd = [*unshare_prefix(), sys.executable, "-m", "tuxutil"]
+        cmd = [*unshare_prefix(), *system.self_cmd()]
         if system.DRY_RUN:
             cmd.append("--dry-run")
         cmd += _build_argv(args)

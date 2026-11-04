@@ -1,17 +1,18 @@
 """PySide6 desktop GUI for TuxUtil.
 
-A frontend over the CLI: runs `python -m tuxutil ...` via QProcess and reads stdout.
+A frontend over the CLI: runs tuxutil's CLI via QProcess and reads stdout.
 """
 import json
 import os
 import shlex
 import sys
+import urllib.parse
 from pathlib import Path
 
 # PySide6 is imported lazily so tuxutil can run headless in CI without GUI dependencies.
 try:
-    from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, Signal
-    from PySide6.QtGui import QColor, QFont
+    from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTemporaryDir, QTimer, QUrl, Signal
+    from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -19,12 +20,14 @@ try:
         QFileDialog,
         QFormLayout,
         QFrame,
+        QGridLayout,
         QGroupBox,
         QHBoxLayout,
         QHeaderView,
         QLabel,
         QLineEdit,
         QListWidget,
+        QListWidgetItem,
         QMainWindow,
         QMessageBox,
         QPlainTextEdit,
@@ -71,6 +74,17 @@ def mask_command_for_log(cmd):
             continue
         arg_str = str(arg)
         lower = arg_str.lower()
+        if lower.startswith(("http://", "https://")):
+            # A signed link's query string is its password, and a link can also carry user:password@.
+            try:
+                url = urllib.parse.urlsplit(arg_str)
+            except ValueError:
+                masked.append("******")
+                continue
+            masked.append(url._replace(
+                netloc=url.netloc.rsplit("@", 1)[-1], query="******" if url.query else "", fragment="",
+            ).geturl())
+            continue
         if any(kw in lower for kw in ("password", "secret", "token")):
             if "=" in arg_str:
                 flag, _ = arg_str.split("=", 1)
@@ -99,7 +113,154 @@ def format_size(size_bytes):
     return f"{size_bytes} B"
 
 
+THEMES = {
+    "dark": {
+        "bg": "#16181d", "surface": "#1e2127", "raised": "#2a2e37", "field": "#121419", "border": "#363b46",
+        "text": "#e6e8ec", "dim": "#9aa1ad", "accent": "#3f74e0", "accent_hover": "#5587ea", "on_accent": "#ffffff",
+        "ok": "#5fd38d", "warn": "#f2b84b", "err": "#ff7b7b", "danger": "#c93c3c", "danger_hover": "#dc5050",
+        "danger_tint": "#2b1c20",
+    },
+    "light": {
+        "bg": "#f3f4f6", "surface": "#ffffff", "raised": "#eceef1", "field": "#ffffff", "border": "#d0d4db",
+        "text": "#1c1f24", "dim": "#5d6470", "accent": "#2f6fdb", "accent_hover": "#245cc0", "on_accent": "#ffffff",
+        "ok": "#1a7f3c", "warn": "#8f5b00", "err": "#c62828", "danger": "#c62828", "danger_hover": "#a92020",
+        "danger_tint": "#fdf0f0",
+    },
+}
+C = dict(THEMES["dark"])  # The active theme's colors. apply_theme fills this in.
+
+STYLESHEET = """
+QWidget {{ color: {text}; }}
+QToolTip {{ background: {raised}; color: {text}; border: 1px solid {border}; padding: 4px; }}
+QFrame#sidebar {{ background: {surface}; border-right: 1px solid {border}; }}
+QLabel#brand {{ font-size: 16pt; font-weight: 700; padding: 16px 16px 8px 16px; }}
+QLabel#sidebarFoot {{ color: {dim}; padding: 8px 16px 14px 16px; }}
+QListWidget#nav {{ background: transparent; border: none; outline: 0; }}
+QListWidget#nav::item {{ padding: 7px 10px; margin: 1px 8px; border-radius: 6px; }}
+QListWidget#nav::item:disabled {{ color: {dim}; padding-top: 14px; }}
+QListWidget#nav::item:hover:enabled {{ background: {raised}; }}
+QListWidget#nav::item:selected {{ background: {accent}; color: {on_accent}; font-weight: 600; }}
+QTabWidget::pane {{ border: none; }}
+QScrollArea {{ background: transparent; border: none; }}
+QLabel#pageTitle {{ font-size: 16pt; font-weight: 700; }}
+QLabel#dim, QLabel#hint {{ color: {dim}; }}
+QLabel#hint {{ font-size: 9pt; }}
+QLabel#hintDanger {{ color: {err}; font-size: 9pt; font-weight: 600; }}
+QGroupBox {{ background: {surface}; border: 1px solid {border}; border-radius: 8px; font-weight: 600;
+             margin-top: 26px; padding: 10px 6px 6px 6px; }}
+QGroupBox::title {{ subcontrol-origin: margin; subcontrol-position: top left; left: 2px; top: 2px; }}
+QGroupBox QLabel, QGroupBox QCheckBox, QGroupBox QLineEdit, QGroupBox QComboBox, QGroupBox QPushButton,
+QGroupBox QListWidget, QGroupBox QTreeWidget {{ font-weight: normal; }}
+QGroupBox#dangerCard {{ background: {danger_tint}; border-color: {danger}; }}
+QGroupBox#dangerCard::title {{ color: {err}; }}
+QFrame#errorBanner {{ background: {danger_tint}; border: 1px solid {danger}; border-radius: 8px; }}
+QFrame#footer, QFrame#jobPanel {{ background: {surface}; border: none; border-top: 1px solid {border}; }}
+QPushButton {{ background: {raised}; border: 1px solid {border}; border-radius: 6px; padding: 6px 14px; }}
+QPushButton:hover {{ border-color: {accent_hover}; }}
+QPushButton:pressed {{ background: {border}; }}
+QPushButton:disabled {{ background: transparent; color: {dim}; border-color: {border}; }}
+QPushButton#primaryAction {{ background: {accent}; border-color: {accent}; color: {on_accent}; font-weight: 600; }}
+QPushButton#primaryAction:hover {{ background: {accent_hover}; border-color: {accent_hover}; }}
+QPushButton#dangerAction {{ background: {danger}; border-color: {danger}; color: #ffffff; font-weight: 600; }}
+QPushButton#dangerAction:hover {{ background: {danger_hover}; border-color: {danger_hover}; }}
+QPushButton#primaryAction:disabled, QPushButton#dangerAction:disabled {{
+    background: transparent; color: {dim}; border-color: {border}; font-weight: normal; }}
+QLineEdit, QComboBox {{ background: {field}; border: 1px solid {border}; border-radius: 6px; padding: 5px 8px; }}
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {accent}; }}
+QLineEdit:disabled, QComboBox:disabled {{ color: {dim}; background: transparent; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox::down-arrow {{ image: url("{arrow}"); width: 12px; height: 12px; margin-right: 8px; }}
+QCheckBox {{ spacing: 8px; }}
+QCheckBox::indicator, QTreeWidget::indicator {{ width: 14px; height: 14px; border: 1px solid {dim}; border-radius: 4px; background: {field}; }}
+QCheckBox::indicator:checked, QTreeWidget::indicator:checked {{ image: url("{check}"); background: {accent}; border-color: {accent}; }}
+QCheckBox::indicator:disabled, QTreeWidget::indicator:disabled {{ background: transparent; border-color: {border}; }}
+QComboBox QAbstractItemView {{ background: {raised}; border: 1px solid {border}; outline: 0;
+                               selection-background-color: {accent}; selection-color: {on_accent}; }}
+QTreeWidget, QListWidget, QPlainTextEdit {{ background: {field}; border: 1px solid {border}; border-radius: 6px; outline: 0; }}
+QTreeWidget::item {{ padding: 3px 0; }}
+QTreeWidget::item:selected, QListWidget::item:selected {{ background: {accent}; color: {on_accent}; }}
+QHeaderView {{ background: transparent; }}
+QHeaderView::section {{ background: {surface}; color: {dim}; border: none; border-bottom: 1px solid {border};
+                        padding: 6px 8px; font-weight: 600; }}
+QProgressBar {{ background: {field}; border: 1px solid {border}; border-radius: 6px; text-align: center; min-height: 20px; }}
+QProgressBar::chunk {{ background: {accent}; border-radius: 5px; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle {{ background: {border}; border-radius: 3px; }}
+QScrollBar::handle:vertical {{ min-height: 28px; }}
+QScrollBar::handle:horizontal {{ min-width: 28px; }}
+QScrollBar::handle:hover {{ background: {dim}; }}
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
+    background: transparent; border: none; width: 0; height: 0; }}
+QSplitter::handle {{ background: {border}; }}
+"""
+
+NAV = [("SYSTEM", ["Doctor", "Apps", "Tweaks", "Updates"]), ("IMAGES", ["Windows ISO", "Linux ISO", "Flash USB"])]
+
+
 if HAS_PYSIDE6:
+
+    _icon_dir = None
+
+    def apply_theme(app):
+        """Pick dark or light from the desktop, then draw everything ourselves so every desktop theme looks the same."""
+        C.update(THEMES["dark" if app.palette().window().color().lightness() < 128 else "light"])
+        app.setStyle("Fusion")
+        pal = QPalette()
+        for role, key in (
+            (QPalette.Window, "bg"), (QPalette.WindowText, "text"), (QPalette.Base, "field"),
+            (QPalette.AlternateBase, "surface"), (QPalette.Text, "text"), (QPalette.Button, "raised"),
+            (QPalette.ButtonText, "text"), (QPalette.ToolTipBase, "raised"), (QPalette.ToolTipText, "text"),
+            (QPalette.Highlight, "accent"), (QPalette.HighlightedText, "on_accent"),
+            (QPalette.PlaceholderText, "dim"), (QPalette.Link, "accent_hover"),
+        ):
+            pal.setColor(role, QColor(C[key]))
+        for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+            pal.setColor(QPalette.Disabled, role, QColor(C["dim"]))
+        app.setPalette(pal)
+        # Style sheets can only load pictures from files, so the two icons are written out here.
+        global _icon_dir
+        _icon_dir = _icon_dir or QTemporaryDir()
+        icons = {
+            "arrow": ("M3 6l5 5 5-5", C["dim"]),
+            "check": ("M3.5 8.5l3 3 6-7", C["on_accent"]),
+        }
+        paths = {}
+        for name, (shape, color) in icons.items():
+            paths[name] = _icon_dir.filePath(f"{name}.svg")
+            Path(paths[name]).write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+                f'<path d="{shape}" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            )
+        app.setStyleSheet(STYLESHEET.format(**C, **paths))
+
+    def set_tone(label, tone):
+        """Color a status label: ok, warn or err. An empty tone clears it."""
+        label.setStyleSheet(f"color: {C[tone]}; font-weight: 600;" if tone else "")
+
+    def page_header(layout, title, subtitle):
+        """Add the title and one-line description every page starts with."""
+        heading = QLabel(title)
+        heading.setObjectName("pageTitle")
+        blurb = QLabel(subtitle)
+        blurb.setObjectName("dim")
+        blurb.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(blurb)
+        layout.addSpacing(2)
+
+    def scroll_page(title, subtitle):
+        """Return a scrolling page and the layout to fill it with."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+        page_header(layout, title, subtitle)
+        scroll.setWidget(content)
+        return scroll, layout
 
     class ErrorBanner(QFrame):
         """Banner shown on a tab when a backend command fails or returns invalid JSON."""
@@ -109,20 +270,12 @@ if HAS_PYSIDE6:
         def __init__(self, parent=None):
             super().__init__(parent)
             self.setObjectName("errorBanner")
-            self.setStyleSheet(
-                "#errorBanner { background-color: rgba(220, 53, 69, 0.12); "
-                "border: 1px solid rgba(220, 53, 69, 0.4); border-radius: 6px; padding: 8px; }"
-            )
             layout = QHBoxLayout(self)
             layout.setContentsMargins(10, 8, 10, 8)
 
-            icon_lbl = QLabel("⚠️")
-            icon_lbl.setStyleSheet("font-size: 20px;")
-            layout.addWidget(icon_lbl)
-
             text_layout = QVBoxLayout()
             self.title_lbl = QLabel()
-            self.title_lbl.setStyleSheet("font-weight: bold; color: #dc3545;")
+            set_tone(self.title_lbl, "err")
             self.msg_lbl = QLabel()
             self.msg_lbl.setWordWrap(True)
             text_layout.addWidget(self.title_lbl)
@@ -150,9 +303,21 @@ if HAS_PYSIDE6:
             self._init_form()
 
         def _init_form(self):
-            layout = QFormLayout(self)
-            layout.setContentsMargins(6, 6, 6, 6)
-            layout.setSpacing(10)
+            root = QVBoxLayout(self)
+            root.setContentsMargins(4, 4, 4, 4)
+            root.setSpacing(16)
+            layout = QFormLayout()
+            layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            layout.setHorizontalSpacing(16)
+            layout.setVerticalSpacing(12)
+            root.addLayout(layout)
+            checks = QGridLayout()
+            checks.setHorizontalSpacing(24)
+            checks.setVerticalSpacing(12)
+            checks.setColumnStretch(0, 1)
+            checks.setColumnStretch(1, 1)
+            root.addLayout(checks)
+            bools = 0
 
             for opt in self.schema:
                 flag = opt.get("flag", "")
@@ -163,34 +328,42 @@ if HAS_PYSIDE6:
                 choices = opt.get("choices", [])
 
                 lbl = QLabel(label_txt)
-                if help_txt:
-                    lbl.setToolTip(help_txt)
+                cell = QVBoxLayout()
+                cell.setSpacing(3)
 
                 if otype == "bool":
-                    w = QCheckBox()
+                    w = QCheckBox(label_txt)
                     w.setAccessibleName(label_txt)
                     w.setChecked(bool(default_val))
-                    layout.addRow(lbl, w)
+                    cell.addWidget(w)
+                    checks.addLayout(cell, bools // 2, bools % 2, Qt.AlignTop)
+                    bools += 1
                     self.fields[flag] = ("bool", w)
                 elif otype == "choice":
                     w = QComboBox()
                     w.setAccessibleName(label_txt)
+                    # No default means the flag is optional: blank sends nothing and keeps the source's value.
+                    if str(default_val) not in [str(c) for c in choices]:
+                        w.addItem("")
                     w.addItems([str(c) for c in choices])
                     if default_val and str(default_val) in choices:
                         w.setCurrentText(str(default_val))
-                    layout.addRow(lbl, w)
+                    cell.addWidget(w)
+                    layout.addRow(lbl, cell)
                     self.fields[flag] = ("choice", w)
                 elif otype == "path":
-                    box = QWidget()
-                    h = QHBoxLayout(box)
-                    h.setContentsMargins(0, 0, 0, 0)
+                    h = QHBoxLayout()
                     le = QLineEdit(str(default_val or ""))
                     le.setAccessibleName(label_txt)
                     btn = QPushButton("Browse...")
 
-                    def make_browse(target=le, title=label_txt):
+                    # ponytail: the schema has no file-or-folder key, so this reads it from the help text.
+                    def make_browse(target=le, title=label_txt, wants_dir=help_txt.startswith("Directory")):
                         def on_browse():
-                            fn, _ = QFileDialog.getOpenFileName(self, f"Select {title}")
+                            if wants_dir:
+                                fn = QFileDialog.getExistingDirectory(self, f"Select {title}")
+                            else:
+                                fn, _ = QFileDialog.getOpenFileName(self, f"Select {title}")
                             if fn:
                                 target.setText(fn)
                         return on_browse
@@ -198,15 +371,12 @@ if HAS_PYSIDE6:
                     btn.clicked.connect(make_browse())
                     h.addWidget(le)
                     h.addWidget(btn)
-                    layout.addRow(lbl, box)
+                    cell.addLayout(h)
+                    layout.addRow(lbl, cell)
                     self.fields[flag] = ("path", le)
                 elif otype == "list":
-                    box = QFrame()
-                    box.setFrameShape(QFrame.StyledPanel)
-                    vl = QVBoxLayout(box)
-                    vl.setContentsMargins(4, 4, 4, 4)
                     lw = QListWidget()
-                    lw.setFixedHeight(75)
+                    lw.setFixedHeight(92)
                     lw.setAccessibleName(label_txt)
                     if isinstance(default_val, list):
                         for item in default_val:
@@ -228,23 +398,30 @@ if HAS_PYSIDE6:
                         for it in lst.selectedItems():
                             lst.takeItem(lst.row(it))
 
-                    add_btn.clicked.connect(add_entry)
+                    add_btn.clicked.connect(lambda _=False, fn=add_entry: fn())
                     new_item_le.returnPressed.connect(add_entry)
-                    del_btn.clicked.connect(remove_entry)
+                    del_btn.clicked.connect(lambda _=False, fn=remove_entry: fn())
                     row.addWidget(new_item_le)
                     row.addWidget(add_btn)
                     row.addWidget(del_btn)
-                    vl.addWidget(lw)
-                    vl.addLayout(row)
-                    layout.addRow(lbl, box)
+                    cell.addWidget(lw)
+                    cell.addLayout(row)
+                    layout.addRow(lbl, cell)
                     self.fields[flag] = ("list", lw)
                 else:  # "str"
                     le = QLineEdit(str(default_val or ""))
                     le.setAccessibleName(label_txt)
                     if "password" in flag.lower():
                         le.setEchoMode(QLineEdit.Password)
-                    layout.addRow(lbl, le)
+                    cell.addWidget(le)
+                    layout.addRow(lbl, cell)
                     self.fields[flag] = ("str", le)
+
+                if help_txt:
+                    hint = QLabel(help_txt)
+                    hint.setObjectName("hintDanger" if help_txt.startswith("DANGER") else "hint")
+                    hint.setWordWrap(True)
+                    cell.addWidget(hint)
 
         def collect_args(self):
             args = []
@@ -277,8 +454,15 @@ if HAS_PYSIDE6:
             self.raw_data = []
 
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(14, 14, 14, 14)
+            layout.setContentsMargins(24, 20, 24, 16)
             layout.setSpacing(10)
+            page_header(
+                layout,
+                catalog_type.capitalize(),
+                "Tick what you want, then use the buttons below. Uses this distro's package manager or Flatpak."
+                if catalog_type == "apps"
+                else "Small system changes you can undo. Each one shows its risk.",
+            )
 
             self.banner = ErrorBanner()
             self.banner.retry_requested.connect(self.load_catalog)
@@ -313,10 +497,16 @@ if HAS_PYSIDE6:
                 else ["Tweak", "Risk", "Applied", "Available", "Description"]
             )
             self.tree.setHeaderLabels(headers)
+            self.tree.setRootIsDecorated(False)
+            self.tree.setItemsExpandable(False)
+            self.tree.setIndentation(10)
+            self.tree.setSelectionMode(QTreeWidget.NoSelection)
             header = self.tree.header()
-            for col in range(len(headers) - 1):
+            for col in range(1, len(headers) - 1):
                 header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
             header.setSectionResizeMode(len(headers) - 1, QHeaderView.Stretch)
+            header.resizeSection(0, 290)
+            self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             layout.addWidget(self.tree, 1)
 
             # Action bar
@@ -378,7 +568,7 @@ if HAS_PYSIDE6:
             self.cat_combo.clear()
             self.cat_combo.addItem("All Categories")
 
-            categories = sorted({it.get("category", "General") for it in items})
+            categories = sorted({it.get("category", "General").capitalize() for it in items})
             for cat in categories:
                 self.cat_combo.addItem(cat)
             if current_cat in categories:
@@ -393,16 +583,17 @@ if HAS_PYSIDE6:
                 font.setBold(True)
                 c_item.setFont(0, font)
                 self.tree.addTopLevelItem(c_item)
+                c_item.setFirstColumnSpanned(True)
                 cat_nodes[cat] = c_item
 
             for it in items:
-                cat = it.get("category", "General")
-                parent = cat_nodes.get(cat)
+                parent = cat_nodes.get(it.get("category", "General").capitalize())
                 if not parent:
                     continue
 
                 node = QTreeWidgetItem()
                 node.setText(0, f"{it.get('name', '')} ({it.get('id', '')})")
+                node.setToolTip(0, node.text(0))
                 node.setData(0, Qt.UserRole, it)
 
                 available = it.get("available", True)
@@ -413,7 +604,8 @@ if HAS_PYSIDE6:
                     node.setText(2, "Yes" if available else "No (Distro)")
                     node.setText(3, it.get("description", ""))
                     if inst:
-                        node.setForeground(1, QColor("#2e7d32"))
+                        node.setForeground(1, QColor(C["ok"]))
+                    node.setToolTip(3, it.get("description", ""))
                 else:
                     risk = (it.get("risk") or "low").upper()
                     node.setText(1, risk)
@@ -422,15 +614,11 @@ if HAS_PYSIDE6:
                     node.setText(3, "Yes" if available else "No (Unsupported)")
                     node.setText(4, it.get("description", ""))
 
-                    if risk == "HIGH":
-                        node.setForeground(1, QColor("#d32f2f"))
-                    elif risk == "MEDIUM":
-                        node.setForeground(1, QColor("#f57f17"))
-                    else:
-                        node.setForeground(1, QColor("#2e7d32"))
+                    node.setToolTip(4, it.get("description", ""))
+                    node.setForeground(1, QColor(C[{"HIGH": "err", "MEDIUM": "warn"}.get(risk, "ok")]))
 
                     if applied is True:
-                        node.setForeground(2, QColor("#2e7d32"))
+                        node.setForeground(2, QColor(C["ok"]))
 
                 if available:
                     node.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
@@ -438,7 +626,7 @@ if HAS_PYSIDE6:
                 else:
                     node.setFlags(Qt.ItemIsUserCheckable)
                     node.setCheckState(0, Qt.Unchecked)
-                    node.setForeground(0, QColor("#888888"))
+                    node.setForeground(0, QColor(C["dim"]))
 
                 parent.addChild(node)
 
@@ -499,31 +687,38 @@ if HAS_PYSIDE6:
                 on_finished=self.load_catalog,
             )
 
-    class IsoBuilderTab(QScrollArea):
+    class IsoBuilderTab(QWidget):
         """Shared implementation for Windows ISO and Linux ISO customizer tabs."""
 
         def __init__(self, main_win, flavor="winiso", parent=None):
             super().__init__(parent)
             self.main_win = main_win
             self.flavor = flavor  # "winiso" or "linuxiso"
-            self.setWidgetResizable(True)
             self.dynamic_form = None
 
-            content = QWidget()
-            layout = QVBoxLayout(content)
-            layout.setContentsMargins(16, 16, 16, 16)
-            layout.setSpacing(14)
+            outer = QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(0)
+            scroll, layout = scroll_page(
+                "Windows 11 ISO" if flavor == "winiso" else "Linux ISO",
+                "Make a debloated Windows 11 installer from an official ISO. Your original ISO is never changed."
+                if flavor == "winiso"
+                else "Remaster a live Linux ISO: add or remove packages, copy in files, set boot options. "
+                "Your original ISO is never changed.",
+            )
+            outer.addWidget(scroll, 1)
 
             self.banner = ErrorBanner()
             self.banner.retry_requested.connect(self.on_refresh_info)
             layout.addWidget(self.banner)
 
             # Source ISO Picker
-            iso_title = "Source Windows 11 ISO" if flavor == "winiso" else "Source Linux Live ISO"
-            source_group = QGroupBox(iso_title)
-            s_layout = QHBoxLayout(source_group)
+            source_group = QGroupBox("Source ISO")
+            source_box = QVBoxLayout(source_group)
+            s_layout = QHBoxLayout()
+            source_box.addLayout(s_layout)
             self.iso_path_edit = QLineEdit()
-            self.iso_path_edit.setPlaceholderText("Select installation ISO image...")
+            self.iso_path_edit.setPlaceholderText("Choose an ISO file...")
             self.iso_path_edit.setAccessibleName(f"{flavor} Source ISO Path")
             self.iso_path_edit.textChanged.connect(self.on_iso_path_changed)
 
@@ -531,19 +726,47 @@ if HAS_PYSIDE6:
             btn_browse_iso.clicked.connect(self.browse_source_iso)
             s_layout.addWidget(self.iso_path_edit)
             s_layout.addWidget(btn_browse_iso)
+
+            # Download: pick from the catalog or paste a link. Stays hidden until the catalog has loaded.
+            self.download_row = QWidget()
+            d_layout = QHBoxLayout(self.download_row)
+            d_layout.setContentsMargins(0, 0, 0, 0)
+            self.download_combo = QComboBox()
+            self.download_combo.setEditable(True)
+            self.download_combo.setInsertPolicy(QComboBox.NoInsert)
+            self.download_combo.lineEdit().setPlaceholderText("Or pick an ISO to download, or paste a link...")
+            self.download_combo.setAccessibleName(f"{flavor} ISO to download")
+            self.download_combo.currentTextChanged.connect(self.on_download_choice_changed)
+            self.btn_download = QPushButton("Download")
+            self.btn_download.clicked.connect(self.on_download_clicked)
+            d_layout.addWidget(self.download_combo, 1)
+            d_layout.addWidget(self.btn_download)
+            self.download_row.setVisible(False)
+            source_box.addWidget(self.download_row)
+            self.lbl_download_note = QLabel("")
+            self.lbl_download_note.setObjectName("hint")
+            self.lbl_download_note.setWordWrap(True)
+            self.lbl_download_note.setVisible(False)
+            source_box.addWidget(self.lbl_download_note)
             layout.addWidget(source_group)
 
-            # Info Group
+            # Info Group: stays hidden until an ISO has been read.
             if flavor == "winiso":
-                self.info_group = QGroupBox("Detected Windows Editions")
+                self.info_group = QGroupBox("Editions in this ISO (click one to build it)")
                 ig_layout = QVBoxLayout(self.info_group)
                 self.editions_tree = QTreeWidget()
                 self.editions_tree.setHeaderLabels(["Index", "Edition Name", "Architecture", "Build", "Size"])
-                self.editions_tree.setFixedHeight(120)
+                self.editions_tree.setRootIsDecorated(False)
+                header = self.editions_tree.header()
+                for col in range(5):
+                    header.setSectionResizeMode(col, QHeaderView.Stretch if col == 1 else QHeaderView.ResizeToContents)
+                self.editions_tree.setFixedHeight(150)
+                self.editions_tree.itemSelectionChanged.connect(self.on_edition_selected)
                 ig_layout.addWidget(self.editions_tree)
             else:
-                self.info_group = QGroupBox("Linux Environment & Compatibility")
+                self.info_group = QGroupBox("Compatibility")
                 f_layout = QFormLayout(self.info_group)
+                f_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
                 self.lbl_family = QLabel("—")
                 self.lbl_arch = QLabel("—")
                 self.lbl_supported = QLabel("—")
@@ -553,39 +776,39 @@ if HAS_PYSIDE6:
                 f_layout.addRow("Architecture:", self.lbl_arch)
                 f_layout.addRow("Supported:", self.lbl_supported)
                 f_layout.addRow("Notes:", self.lbl_notes)
+            self.info_group.setVisible(False)
             layout.addWidget(self.info_group)
 
             # Customization Options Form
-            self.options_group = QGroupBox("Customization Options")
+            self.options_group = QGroupBox("Options")
             self.options_layout = QVBoxLayout(self.options_group)
             layout.addWidget(self.options_group)
+            layout.addStretch()
 
-            # Destination Output ISO
-            out_group = QGroupBox("Output ISO Destination")
-            o_layout = QHBoxLayout(out_group)
+            # Output and Build stay on screen however far the options scroll.
+            footer = QFrame()
+            footer.setObjectName("footer")
+            o_layout = QHBoxLayout(footer)
+            o_layout.setContentsMargins(24, 10, 24, 10)
+            o_layout.addWidget(QLabel("Save to"))
             self.out_path_edit = QLineEdit()
             default_fn = "custom-win11.iso" if flavor == "winiso" else "custom-linux.iso"
             self.out_path_edit.setText(str(Path.home() / default_fn))
             self.out_path_edit.setAccessibleName(f"{flavor} Output ISO Path")
             btn_browse_out = QPushButton("Browse...")
             btn_browse_out.clicked.connect(self.browse_out_iso)
-            o_layout.addWidget(self.out_path_edit)
+            o_layout.addWidget(self.out_path_edit, 1)
             o_layout.addWidget(btn_browse_out)
-            layout.addWidget(out_group)
 
-            # Build Button
-            btn_title = "🔨 Build Custom Windows ISO" if flavor == "winiso" else "🔨 Build Custom Linux ISO"
+            btn_title = "Build ISO"
             self.btn_build = QPushButton(btn_title)
             self.btn_build.setObjectName("primaryAction")
-            self.btn_build.setFixedHeight(38)
-            self.btn_build.setAccessibleName(btn_title)
+            self.btn_build.setAccessibleName("Build Custom Windows ISO" if flavor == "winiso" else "Build Custom Linux ISO")
             if flavor == "linuxiso":
                 self.btn_build.setEnabled(False)  # blocked until verified supported
             self.btn_build.clicked.connect(self.on_build_clicked)
-            layout.addWidget(self.btn_build)
-
-            layout.addStretch()
-            self.setWidget(content)
+            o_layout.addWidget(self.btn_build)
+            outer.addWidget(footer)
 
         def browse_source_iso(self):
             fn, _ = QFileDialog.getOpenFileName(self, "Select ISO Image", "", "ISO Images (*.iso)")
@@ -597,7 +820,58 @@ if HAS_PYSIDE6:
             if fn:
                 self.out_path_edit.setText(fn)
 
+        def load_download_catalog(self):
+            def on_done(exit_code, stdout, stderr):
+                try:
+                    entries = json.loads(stdout) if exit_code == 0 else []
+                except ValueError:
+                    entries = []
+                kind = "windows" if self.flavor == "winiso" else "linux"
+                self.download_combo.clear()
+                for entry in entries:
+                    if entry.get("kind") == kind:
+                        self.download_combo.addItem(entry.get("name", entry.get("id", "")), entry)
+                self.download_combo.setCurrentIndex(-1)
+                self.download_row.setVisible(True)
+
+            self.main_win.run_cli_query(["iso", "list", "--json"], on_done)
+
+        def selected_download(self):
+            """The catalog entry the combo's text names, or None for a pasted link."""
+            i = self.download_combo.findText(self.download_combo.currentText().strip())
+            return self.download_combo.itemData(i) if i >= 0 else None
+
+        def on_download_choice_changed(self):
+            entry = self.selected_download()
+            page_only = bool(entry) and not entry.get("direct")
+            self.btn_download.setText("Open Download Page" if page_only else "Download")
+            note = entry.get("notes", "") if entry else ""
+            self.lbl_download_note.setText(note)
+            self.lbl_download_note.setVisible(bool(note))
+
+        def on_download_clicked(self):
+            entry = self.selected_download()
+            if entry and not entry.get("direct"):
+                QDesktopServices.openUrl(QUrl(entry.get("page", "")))
+                return
+            target = entry["id"] if entry else self.download_combo.currentText().strip()
+            title = f"Downloading {self.download_combo.currentText().strip()}" if entry else "Downloading ISO"
+            # A pasted link may be signed, and other local users can read process arguments.
+            args, env = (["iso", "download", target], None) if entry else (["iso", "download"], {"TUXUTIL_DOWNLOAD_URL": target})
+            if not entry and not target.startswith(("http://", "https://")):
+                QMessageBox.warning(self, "Nothing to Download", "Pick an ISO from the list, or paste a link starting with http:// or https://.")
+                return
+
+            def on_success():
+                if self.main_win.last_saved_path:
+                    self.iso_path_edit.setText(self.main_win.last_saved_path)
+
+            self.main_win.run_cli_job(args, title, on_finished=on_success, env=env)
+
         def load_options(self):
+            if not self.download_combo.count():
+                self.load_download_catalog()
+
             def on_done(exit_code, stdout, stderr):
                 if exit_code != 0:
                     self.banner.show_error(
@@ -620,12 +894,18 @@ if HAS_PYSIDE6:
 
             self.main_win.run_cli_query([self.flavor, "options", "--json"], on_done)
 
+        def on_edition_selected(self):
+            items = self.editions_tree.selectedItems()
+            if items and self.dynamic_form and "--edition" in self.dynamic_form.fields:
+                self.dynamic_form.fields["--edition"][1].setText(items[0].text(0))
+
         def on_iso_path_changed(self):
             path = self.iso_path_edit.text().strip()
+            self.info_group.setVisible(False)
             if self.flavor == "linuxiso":
                 # Build stays blocked until this path has been inspected.
                 self.lbl_supported.setText("—")
-                self.lbl_supported.setStyleSheet("")
+                set_tone(self.lbl_supported, "")
                 self.btn_build.setEnabled(False)
             if path and (Path(path).is_file() or os.environ.get("TUXUTIL_CLI")):
                 self.on_refresh_info()
@@ -655,6 +935,7 @@ if HAS_PYSIDE6:
                         self.btn_build.setEnabled(False)
                     return
 
+                self.info_group.setVisible(True)
                 if self.flavor == "winiso":
                     self.editions_tree.clear()
                     for ed in data.get("editions", []):
@@ -675,14 +956,12 @@ if HAS_PYSIDE6:
 
                     # Hard rule: Show notes and block Build when supported is false
                     if supported:
-                        self.lbl_supported.setText("✅ Supported")
-                        self.lbl_supported.setStyleSheet("color: #2e7d32; font-weight: bold;")
-                        self.lbl_notes.setStyleSheet("color: #2e7d32;")
+                        self.lbl_supported.setText("Supported")
+                        set_tone(self.lbl_supported, "ok")
                         self.btn_build.setEnabled(self.main_win.active_process is None)
                     else:
-                        self.lbl_supported.setText("❌ Unsupported")
-                        self.lbl_supported.setStyleSheet("color: #d32f2f; font-weight: bold;")
-                        self.lbl_notes.setStyleSheet("color: #d32f2f; font-weight: bold;")
+                        self.lbl_supported.setText("Unsupported")
+                        set_tone(self.lbl_supported, "err")
                         self.btn_build.setEnabled(False)
                         self.banner.show_error("ISO Not Supported", f"This Linux ISO cannot be customized.\nNotes: {notes}")
 
@@ -705,7 +984,8 @@ if HAS_PYSIDE6:
                 self.main_win.last_built_iso = out_path
                 self.main_win.flash_iso_edit.setText(out_path)
 
-            self.main_win.run_cli_job(cmd, f"Building {self.flavor.upper()} Image", on_finished=on_success)
+            title = "Building Windows ISO" if self.flavor == "winiso" else "Building Linux ISO"
+            self.main_win.run_cli_job(cmd, title, on_finished=on_success)
 
     class TuxUtilWindow(QMainWindow):
         """Main application window for TuxUtil."""
@@ -715,6 +995,7 @@ if HAS_PYSIDE6:
             self.active_process = None
             self.active_job_is_flash = False
             self.last_built_iso = ""
+            self.last_saved_path = ""
             self._active_queries = set()
             self._closing = False
 
@@ -722,8 +1003,8 @@ if HAS_PYSIDE6:
             self.resize(1000, 720)
             self.setMinimumSize(900, 600)
 
+            apply_theme(QApplication.instance())
             self._init_ui()
-            self._setup_styling()
             self.load_doctor_info()
 
         def closeEvent(self, event):
@@ -763,41 +1044,42 @@ if HAS_PYSIDE6:
             self._active_queries.clear()
             super().closeEvent(event)
 
-        def _setup_styling(self):
-            pal = self.palette()
-            is_dark = pal.window().color().lightness() < 128
-            bg_panel = "#2d2d2d" if is_dark else "#f8f9fa"
-            border_color = "rgba(255, 255, 255, 0.12)" if is_dark else "rgba(0, 0, 0, 0.15)"
-            highlight = pal.highlight().color().name()
-
-            self.setStyleSheet(f"""
-                QTabWidget::pane {{ border: 1px solid {border_color}; }}
-                QTabBar::tab {{ padding: 8px 16px; font-weight: 500; margin-right: 4px; }}
-                QTabBar::tab:selected {{ background: {bg_panel}; border-bottom: 2px solid {highlight}; font-weight: bold; }}
-                QGroupBox {{ font-weight: bold; border: 1px solid {border_color}; border-radius: 6px; margin-top: 12px; padding-top: 10px; }}
-                QPushButton {{ padding: 6px 14px; border-radius: 4px; font-weight: 500; }}
-                QPushButton:disabled {{ background-color: rgba(128, 128, 128, 0.2); color: rgba(128, 128, 128, 0.6); border: 1px solid rgba(128, 128, 128, 0.2); }}
-                QPushButton#primaryAction {{ background-color: {highlight}; color: {pal.highlightedText().color().name()}; font-weight: bold; }}
-                QPushButton#primaryAction:disabled {{ background-color: rgba(128, 128, 128, 0.2); color: rgba(128, 128, 128, 0.6); }}
-                QPushButton#dangerAction {{ background-color: #d32f2f; color: white; font-weight: bold; }}
-                QPushButton#dangerAction:disabled {{ background-color: rgba(128, 128, 128, 0.2); color: rgba(128, 128, 128, 0.6); }}
-                QTreeWidget, QListWidget, QPlainTextEdit {{ border: 1px solid {border_color}; border-radius: 4px; }}
-                QProgressBar {{ border: 1px solid {border_color}; border-radius: 4px; text-align: center; font-weight: bold; }}
-                QProgressBar::chunk {{ background-color: {highlight}; border-radius: 3px; }}
-            """)
-
         def _init_ui(self):
             central = QWidget(self)
             self.setCentralWidget(central)
-            main_layout = QVBoxLayout(central)
-            main_layout.setContentsMargins(12, 12, 12, 12)
+            main_layout = QHBoxLayout(central)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(0)
 
-            splitter = QSplitter(Qt.Vertical)
-            main_layout.addWidget(splitter, 1)
+            sidebar = QFrame()
+            sidebar.setObjectName("sidebar")
+            sidebar.setFixedWidth(180)
+            side = QVBoxLayout(sidebar)
+            side.setContentsMargins(0, 0, 0, 0)
+            side.setSpacing(0)
+            brand = QLabel("TuxUtil")
+            brand.setObjectName("brand")
+            side.addWidget(brand)
+            self.nav = QListWidget()
+            self.nav.setObjectName("nav")
+            self.nav.setAccessibleName("Sections")
+            self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            side.addWidget(self.nav, 1)
+            self.lbl_sidebar_distro = QLabel("")
+            self.lbl_sidebar_distro.setObjectName("sidebarFoot")
+            self.lbl_sidebar_distro.setWordWrap(True)
+            side.addWidget(self.lbl_sidebar_distro)
+            main_layout.addWidget(sidebar)
+
+            self.splitter = QSplitter(Qt.Vertical)
+            self.splitter.setChildrenCollapsible(False)
+            self.splitter.setHandleWidth(1)
+            main_layout.addWidget(self.splitter, 1)
 
             self.tabs = QTabWidget()
             self.tabs.setAccessibleName("TuxUtil Tabs")
-            splitter.addWidget(self.tabs)
+            self.tabs.tabBar().hide()  # The sidebar switches pages.
+            self.splitter.addWidget(self.tabs)
 
             # Tab 1: Doctor
             self.tab_doctor = self._create_doctor_tab()
@@ -823,26 +1105,36 @@ if HAS_PYSIDE6:
             self.tabs.addTab(self.tab_flash, "Flash USB")
             self.tabs.currentChanged.connect(self._on_tab_changed)
 
+            names = [self.tabs.tabText(i) for i in range(self.tabs.count())]
+            self.nav_items = {}
+            for section, entries in NAV:
+                head = QListWidgetItem(section)
+                head.setFlags(Qt.NoItemFlags)
+                self.nav.addItem(head)
+                for name in entries:
+                    item = QListWidgetItem(name)
+                    item.setData(Qt.UserRole, names.index(name))
+                    self.nav.addItem(item)
+                    self.nav_items[names.index(name)] = item
+            self.nav.currentItemChanged.connect(lambda item, _old: item and self.tabs.setCurrentIndex(item.data(Qt.UserRole)))
+            self.tabs.currentChanged.connect(lambda i: self.nav.setCurrentItem(self.nav_items[i]))
+            self.nav.setCurrentItem(self.nav_items[0])
+
             # Execution Panel
             self.exec_panel = self._create_execution_panel()
-            splitter.addWidget(self.exec_panel)
-            splitter.setStretchFactor(0, 7)
-            splitter.setStretchFactor(1, 3)
+            self.splitter.addWidget(self.exec_panel)
+            self.splitter.setStretchFactor(0, 1)
+            self.splitter.setStretchFactor(1, 0)
 
         # Tab 1: Doctor
         def _create_doctor_tab(self):
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            w = QWidget()
-            layout = QVBoxLayout(w)
-            layout.setContentsMargins(16, 16, 16, 16)
-            layout.setSpacing(14)
+            scroll, layout = scroll_page("Doctor", "What TuxUtil sees on this system, and whether the tools it uses are installed.")
 
             self.doctor_banner = ErrorBanner()
             self.doctor_banner.retry_requested.connect(self.load_doctor_info)
             layout.addWidget(self.doctor_banner)
 
-            sys_group = QGroupBox("System Distribution")
+            sys_group = QGroupBox("This System")
             f_layout = QFormLayout(sys_group)
             self.lbl_distro_name = QLabel("Detecting...")
             self.lbl_distro_family = QLabel("Detecting...")
@@ -874,7 +1166,6 @@ if HAS_PYSIDE6:
             layout.addWidget(tools_group)
 
             layout.addStretch()
-            scroll.setWidget(w)
             return scroll
 
         def load_doctor_info(self):
@@ -896,64 +1187,44 @@ if HAS_PYSIDE6:
                 self.lbl_distro_name.setText(data.get("name", "Unknown"))
                 self.lbl_distro_family.setText(data.get("family", "Unknown"))
                 self.lbl_distro_id.setText(data.get("id", "Unknown"))
+                self.lbl_sidebar_distro.setText(data.get("name", ""))
 
                 missing = data.get("missing", [])
                 self.tools_list.clear()
                 if not missing:
-                    self.lbl_tools_status.setText("✅ All required external tools are installed and ready!")
+                    self.lbl_tools_status.setText("All required tools are installed.")
+                    set_tone(self.lbl_tools_status, "ok")
                     self.btn_install_missing.setEnabled(False)
+                    self.btn_install_missing.setVisible(False)
                     self.tools_list.setVisible(False)
                 else:
-                    self.lbl_tools_status.setText(f"⚠️ {len(missing)} external tools are missing:")
+                    self.lbl_tools_status.setText(f"{len(missing)} tools are missing:")
+                    set_tone(self.lbl_tools_status, "warn")
                     for t in missing:
                         self.tools_list.addItem(t)
                     self.tools_list.setVisible(True)
+                    self.btn_install_missing.setVisible(True)
                     self.btn_install_missing.setEnabled(True)
 
             self.run_cli_query(["doctor", "--json"], on_done)
 
         # Tab 4: Updates
         def _create_updates_tab(self):
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            w = QWidget()
-            layout = QVBoxLayout(w)
-            layout.setContentsMargins(20, 20, 20, 20)
-            layout.setSpacing(16)
+            scroll, layout = scroll_page("Updates", "Update this distro's packages and every Flatpak in one go.")
 
-            card = QGroupBox("System & Flatpak Upgrades")
-            c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(16, 16, 16, 16)
-            c_layout.setSpacing(12)
-
-            info = QLabel(
-                "Keep your distribution packages and installed Flatpaks up to date with a single click.\n\n"
-                "• Synchronizes repositories and updates system packages\n"
-                "• Upgrades all Flatpak runtimes and application packages\n"
-                "• Live progress and terminal output are displayed below."
-            )
-            info.setWordWrap(True)
-            c_layout.addWidget(info)
-
-            self.btn_run_update = QPushButton("🚀 Run System & Flatpak Update")
+            row = QHBoxLayout()
+            self.btn_run_update = QPushButton("Run Update")
             self.btn_run_update.setObjectName("primaryAction")
-            self.btn_run_update.setFixedHeight(40)
             self.btn_run_update.clicked.connect(lambda: self.run_cli_job(["update"], "System and Flatpak Update"))
-            c_layout.addWidget(self.btn_run_update)
-
-            layout.addWidget(card)
+            row.addWidget(self.btn_run_update)
+            row.addStretch()
+            layout.addLayout(row)
             layout.addStretch()
-            scroll.setWidget(w)
             return scroll
 
         # Tab 7: Flash USB
         def _create_flash_tab(self):
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            w = QWidget()
-            layout = QVBoxLayout(w)
-            layout.setContentsMargins(16, 16, 16, 16)
-            layout.setSpacing(14)
+            scroll, layout = scroll_page("Flash USB", "Write an ISO to a USB drive and check the copy. System drives can't be picked.")
 
             self.flash_banner = ErrorBanner()
             self.flash_banner.retry_requested.connect(self.load_flash_devices)
@@ -992,15 +1263,14 @@ if HAS_PYSIDE6:
             layout.addWidget(dev_group)
 
             # Destructive Confirmation Box
-            self.confirm_group = QGroupBox("⚠️ Destructive Confirmation Required")
-            self.confirm_group.setStyleSheet(
-                "QGroupBox { border: 2px solid #d32f2f; background: rgba(211, 47, 47, 0.05); }"
-            )
+            self.confirm_group = QGroupBox("Confirm: this erases the drive")
+            self.confirm_group.setObjectName("dangerCard")
             c_layout = QVBoxLayout(self.confirm_group)
             c_layout.setSpacing(10)
 
-            warn_lbl = QLabel("WARNING: All partitions and existing data on the target drive will be PERMANENTLY ERASED!")
-            warn_lbl.setStyleSheet("font-weight: bold; color: #d32f2f;")
+            warn_lbl = QLabel("Everything on the target drive will be permanently erased.")
+            warn_lbl.setWordWrap(True)
+            set_tone(warn_lbl, "err")
             c_layout.addWidget(warn_lbl)
 
             self.lbl_confirm_prompt = QLabel("Select a safe USB drive to proceed.")
@@ -1013,9 +1283,8 @@ if HAS_PYSIDE6:
             self.confirm_input.textChanged.connect(self.validate_flash_confirm)
             c_layout.addWidget(self.confirm_input)
 
-            self.btn_flash_write = QPushButton("⚡ Flash USB Device")
+            self.btn_flash_write = QPushButton("Flash USB Drive")
             self.btn_flash_write.setObjectName("dangerAction")
-            self.btn_flash_write.setFixedHeight(40)
             self.btn_flash_write.setAccessibleName("Write Image to USB Device")
             self.btn_flash_write.setEnabled(False)  # Must stay disabled until ISO, safe dev, and exact path match
             self.btn_flash_write.clicked.connect(self.on_flash_write)
@@ -1023,7 +1292,6 @@ if HAS_PYSIDE6:
 
             layout.addWidget(self.confirm_group)
             layout.addStretch()
-            scroll.setWidget(w)
 
             self.raw_devices = []
             return scroll
@@ -1067,7 +1335,7 @@ if HAS_PYSIDE6:
                         if first_safe == -1:
                             first_safe = idx
                     else:
-                        self.device_combo.addItem(f"⛔ [UNSAFE: {reason or 'System Drive'}] {model} — {path} ({size})", dev)
+                        self.device_combo.addItem(f"Blocked: {model} — {path} ({size}): {reason or 'system drive'}", dev)
                         # Mark unsafe items disabled in view
                         m_idx = self.device_combo.model().index(idx, 0)
                         self.device_combo.model().setData(m_idx, 0, Qt.UserRole - 1)
@@ -1098,12 +1366,12 @@ if HAS_PYSIDE6:
 
             if not safe:
                 reason = dev.get("reason", "Drive is protected or unsafe")
-                self.lbl_selected_device.setText(f"⛔ Cannot select {path}: {reason}\nFlashing to this device is blocked for machine safety.")
-                self.lbl_confirm_prompt.setText("Device is unsafe. Selection disabled.")
+                self.lbl_selected_device.setText(f"{path} can't be used: {reason}.")
+                self.lbl_confirm_prompt.setText("Plug in a USB drive and click Refresh Devices.")
                 self.confirm_input.setEnabled(False)
                 self.btn_flash_write.setEnabled(False)
             else:
-                self.lbl_selected_device.setText(f"Selected Target: {model} | Path: {path} | Size: {size}")
+                self.lbl_selected_device.setText(f"{model}, {path}, {size}")
                 # Hard rule: The confirm text must state the device model and size
                 self.lbl_confirm_prompt.setText(f"To proceed, type the device path exactly ({path}) to confirm flashing {model} ({size}):")
                 self.confirm_input.setEnabled(True)
@@ -1163,14 +1431,15 @@ if HAS_PYSIDE6:
         # Bottom Execution & Live Output Panel
         def _create_execution_panel(self):
             panel = QFrame()
-            panel.setFrameShape(QFrame.StyledPanel)
+            panel.setObjectName("jobPanel")
             layout = QVBoxLayout(panel)
-            layout.setContentsMargins(10, 8, 10, 8)
+            layout.setContentsMargins(24, 8, 24, 8)
             layout.setSpacing(6)
 
             h_row = QHBoxLayout()
             self.lbl_job_status = QLabel("Ready")
-            self.lbl_job_status.setStyleSheet("font-weight: bold;")
+            self.lbl_job_status.setObjectName("dim")
+            self.lbl_job_status.setWordWrap(True)
             self.lbl_job_status.setAccessibleName("Current Job Status")
             h_row.addWidget(self.lbl_job_status, 1)
 
@@ -1179,23 +1448,25 @@ if HAS_PYSIDE6:
             self.btn_cancel_job.setAccessibleName("Cancel Active Job")
             # Hard rule: disabled when no job runs
             self.btn_cancel_job.setEnabled(False)
+            self.btn_cancel_job.setVisible(False)
             self.btn_cancel_job.clicked.connect(self.on_cancel_active_job)
             h_row.addWidget(self.btn_cancel_job)
 
-            self.btn_toggle_log = QPushButton("Hide Log")
-            self.btn_toggle_log.clicked.connect(self._toggle_log)
+            self.btn_toggle_log = QPushButton("Show Log")
+            self.btn_toggle_log.clicked.connect(lambda: self._set_log_visible(not self.log_visible))
             h_row.addWidget(self.btn_toggle_log)
 
-            btn_clear = QPushButton("Clear Log")
-            btn_clear.clicked.connect(lambda: self.log_text.clear())
-            h_row.addWidget(btn_clear)
+            self.btn_clear_log = QPushButton("Clear Log")
+            self.btn_clear_log.clicked.connect(lambda: self.log_text.clear())
+            self.btn_clear_log.setVisible(False)
+            h_row.addWidget(self.btn_clear_log)
             layout.addLayout(h_row)
 
             self.progress_bar = QProgressBar()
             self.progress_bar.setAccessibleName("Job Progress Bar")
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(0)
-            self.progress_bar.setFormat("%p% - Ready")
+            self.progress_bar.setVisible(False)
             layout.addWidget(self.progress_bar)
 
             self.log_text = QPlainTextEdit()
@@ -1205,14 +1476,26 @@ if HAS_PYSIDE6:
             font.setStyleHint(QFont.Monospace)
             self.log_text.setFont(font)
             self.log_text.setMaximumBlockCount(3000)
-            layout.addWidget(self.log_text)
+            self.log_text.setMinimumHeight(100)
+            self.log_text.setVisible(False)
+            self.log_visible = False
+            layout.addWidget(self.log_text, 1)
 
             return panel
 
-        def _toggle_log(self):
-            vis = not self.log_text.isVisible()
-            self.log_text.setVisible(vis)
-            self.btn_toggle_log.setText("Hide Log" if vis else "Show Log")
+        def _set_log_visible(self, visible):
+            self.log_visible = visible
+            self.log_text.setVisible(visible)
+            self.btn_clear_log.setVisible(visible)
+            self.btn_toggle_log.setText("Hide Log" if visible else "Show Log")
+            # The splitter keeps the old sizes unless told, which would leave a gap when the log closes.
+            total = sum(self.splitter.sizes())
+            log_height = 240 if visible else 0
+            self.splitter.setSizes([total - log_height, log_height])
+
+        def _set_job_status(self, text, tone=""):
+            self.lbl_job_status.setText(text)
+            set_tone(self.lbl_job_status, tone)
 
         def _on_tab_changed(self, index):
             tab_text = self.tabs.tabText(index)
@@ -1269,24 +1552,32 @@ if HAS_PYSIDE6:
             proc.errorOccurred.connect(on_error)
             proc.start(full_cmd[0], full_cmd[1:])
 
-        def run_cli_job(self, args, job_title="Job", is_flash=False, on_finished=None):
+        def run_cli_job(self, args, job_title="Job", is_flash=False, on_finished=None, env=None):
             """Run a long job via QProcess, streaming log output and parsing @progress lines."""
             if self.active_process is not None:
                 QMessageBox.warning(self, "Job In Progress", "A job is already running. Please wait or cancel it first.")
                 return
 
             self.active_job_is_flash = is_flash
+            self.last_saved_path = ""
+            self.job_cancelled = False
             base_cmd = get_cli_base_cmd()
             args, password = split_password(args)
             full_cmd = base_cmd + args
 
-            masked_str = mask_command_for_log(full_cmd)
+            # self_cmd's startup code would only be noise here.
+            from . import system
+            prefix = system.self_cmd()
+            shown = ["tuxutil", *full_cmd[len(prefix):]] if full_cmd[:len(prefix)] == prefix else full_cmd
+            masked_str = mask_command_for_log(shown)
             self.log_text.appendPlainText(f"\n$ {masked_str}")
 
-            self.lbl_job_status.setText(f"Running: {job_title}...")
-            self.lbl_job_status.setStyleSheet("font-weight: bold; color: #0288d1;")
+            self._set_job_status(f"Running: {job_title}...")
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat(f"0% - Starting {job_title}...")
+            self.progress_bar.setVisible(True)
+            self.btn_cancel_job.setVisible(True)
+            self._set_log_visible(True)
             # ponytail: terminating the CLI can't reach its root writer, so Cancel would report a stop
             # while the write goes on. Needs a cancel channel through pkexec/sudo, tested as root.
             self.btn_cancel_job.setEnabled(not is_flash)
@@ -1296,10 +1587,14 @@ if HAS_PYSIDE6:
 
             proc = QProcess(self)
             self.active_process = proc
+            env = dict(env or {})
             if password:
-                env = QProcessEnvironment.systemEnvironment()
-                env.insert("TUXUTIL_PASSWORD", password)
-                proc.setProcessEnvironment(env)
+                env["TUXUTIL_PASSWORD"] = password
+            if env:
+                proc_env = QProcessEnvironment.systemEnvironment()
+                for key, value in env.items():
+                    proc_env.insert(key, value)
+                proc.setProcessEnvironment(proc_env)
             line_buf = ""
 
             def handle_stream(text):
@@ -1318,6 +1613,8 @@ if HAS_PYSIDE6:
                         except ValueError:
                             pass
                     else:
+                        if line.startswith("@saved "):
+                            self.last_saved_path = line[len("@saved "):]
                         self.log_text.appendPlainText(line)
 
             def on_out():
@@ -1332,19 +1629,20 @@ if HAS_PYSIDE6:
 
                 self.active_process = None
                 self.btn_cancel_job.setEnabled(False)
+                self.btn_cancel_job.setVisible(False)
+                self.progress_bar.setVisible(False)
                 self.set_actions_enabled(True)
 
-                if exit_code == 0:
-                    self.lbl_job_status.setText(f"✅ {job_title} completed successfully (exit code 0)")
-                    self.lbl_job_status.setStyleSheet("font-weight: bold; color: #2e7d32;")
-                    self.progress_bar.setValue(100)
-                    self.progress_bar.setFormat("100% - Completed successfully")
+                if self.job_cancelled:
+                    self._set_job_status(f"{job_title} cancelled", "warn")
+                elif exit_code == 0:
+                    self._set_job_status(f"{job_title} completed successfully", "ok")
                     if on_finished:
                         on_finished()
                 else:
-                    self.lbl_job_status.setText(f"❌ {job_title} failed with exit code {exit_code}")
-                    self.lbl_job_status.setStyleSheet("font-weight: bold; color: #d32f2f;")
-                    self.progress_bar.setFormat(f"Failed (exit code {exit_code})")
+                    self._set_job_status(f"{job_title} failed with exit code {exit_code}", "err")
+                    if not self.log_visible:
+                        self._set_log_visible(True)
 
                 proc.deleteLater()
 
@@ -1364,13 +1662,12 @@ if HAS_PYSIDE6:
             if not self.active_process:
                 return
 
-            self.log_text.appendPlainText("\n⚠️ Terminating job at user request...")
-            self.lbl_job_status.setText("Terminating job...")
-            self.lbl_job_status.setStyleSheet("font-weight: bold; color: #e65100;")
+            self.log_text.appendPlainText("\nTerminating job at user request...")
+            self.job_cancelled = True
+            self._set_job_status("Terminating job...", "warn")
             proc = self.active_process
             proc.terminate()
 
-            from PySide6.QtCore import QTimer
             # Only this job: another may have started by the time the timer fires.
             QTimer.singleShot(1000, lambda: self.active_process is proc and proc.kill())
 
@@ -1382,8 +1679,10 @@ if HAS_PYSIDE6:
             self.tab_tweaks.btn_act1.setEnabled(enabled)
             self.tab_tweaks.btn_act2.setEnabled(enabled)
             self.btn_run_update.setEnabled(enabled)
+            self.tab_winiso.btn_download.setEnabled(enabled)
+            self.tab_linuxiso.btn_download.setEnabled(enabled)
             self.tab_winiso.btn_build.setEnabled(enabled)
-            self.tab_linuxiso.btn_build.setEnabled(enabled and ("✅" in self.tab_linuxiso.lbl_supported.text()))
+            self.tab_linuxiso.btn_build.setEnabled(enabled and (self.tab_linuxiso.lbl_supported.text() == "Supported"))
             self.validate_flash_confirm()
 
 

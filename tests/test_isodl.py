@@ -195,6 +195,22 @@ class IsoDownloadTests(unittest.TestCase):
             self.assertEqual(self.run_download(self.base + "/moved", Path(tmp)), 0)
             self.assertEqual((Path(tmp) / "moved.iso").read_bytes(), DATA)
 
+    def test_part_symlink_is_never_written_through(self):
+        real_open = isodl._open_resuming
+        def link_appears_late(url, part):
+            opened = real_open(url, part)
+            part.symlink_to(part.parent / "keep.txt")
+            return opened
+        for name, wrapper in (("already there", real_open), ("appears late", link_appears_late)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp, patch.object(isodl, "_open_resuming", wrapper):
+                folder = Path(tmp)
+                (folder / "keep.txt").write_text("keep this")
+                if wrapper is real_open:
+                    (folder / "a.iso.part").symlink_to(folder / "keep.txt")
+                self.assertEqual(self.run_download(self.base + "/a.iso", folder), 1)
+                self.assertEqual((folder / "keep.txt").read_text(), "keep this")
+                self.assertFalse((folder / "a.iso").exists())
+
     def test_no_target_at_all_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ"):
             os.environ.pop("TUXUTIL_DOWNLOAD_URL", None)

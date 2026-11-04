@@ -10,6 +10,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tuxutil import __version__
 from tuxutil import flash, system
 from tuxutil.cli import main
 
@@ -405,7 +406,7 @@ class WriteGuardTest(unittest.TestCase):
             [*argv[:3], "--version"], cwd="/", env=env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("0.1.0", proc.stdout)
+        self.assertIn(__version__, proc.stdout)
 
     def test_mode_prefers_hybrid_raw(self):
         self.assertEqual(flash.mode_from_flags(True, True), "raw")

@@ -191,11 +191,12 @@ def self_cmd():
     """Argv prefix that re-invokes tuxutil, e.g. under pkexec.
 
     Not `python -m`: that searches the current folder first, so a tuxutil/ or json.py there would
-    run instead, as root under sudo. pkexec also drops PYTHONPATH, so the package's folder is named here.
+    run instead, as root under sudo. -I leaves out the current folder and ignores PYTHONPATH, and
+    pkexec drops that anyway, so the package's folder is named here. Children only need the stdlib.
     """
     parent = str(Path(__file__).resolve().parent.parent)
     code = (
-        f"import sys; sys.path[:] = [{parent!r}, *[p for p in sys.path if p]]; "
+        f"import sys; sys.path.insert(0, {parent!r}); "
         "sys.argv[0] = 'tuxutil'; from tuxutil.cli import main; raise SystemExit(main())"
     )
-    return [sys.executable, "-c", code]
+    return [sys.executable, "-I", "-c", code]

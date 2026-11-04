@@ -65,6 +65,8 @@ TOOL_PACKAGES = {
     "unshare": {"default": "util-linux"},
     "flatpak": {},
     "qemu-system-x86_64": {"arch": "qemu-full", "debian": "qemu-system-x86", "fedora": "qemu-system-x86", "suse": "qemu-x86"},
+    # 7z reads UDF. xorriso only sees the ISO9660 bridge on Microsoft ISOs.
+    "7z": {"arch": "7zip", "debian": "p7zip-full", "fedora": "p7zip-plugins", "suse": "7zip", "alpine": "7zip", "void": "7zip"},
 }
 
 

@@ -415,26 +415,164 @@ class TestCLIOptionsOutput(unittest.TestCase):
 
 
 class TestBootRecordSelection(unittest.TestCase):
-    """Test boot record file detection logic."""
+    """Boot catalog selection used by the ISO builder."""
+
+    def _tree(self, root, noprompt=True, regular=True, bios=True):
+        os.makedirs(os.path.join(root, "boot"), exist_ok=True)
+        os.makedirs(os.path.join(root, "efi", "microsoft", "boot"), exist_ok=True)
+        if bios:
+            open(os.path.join(root, "boot", "etfsboot.com"), "w").close()
+        if noprompt:
+            open(os.path.join(root, "efi", "microsoft", "boot", "efisys_noprompt.bin"), "w").close()
+        if regular:
+            open(os.path.join(root, "efi", "microsoft", "boot", "efisys.bin"), "w").close()
 
     def test_uefi_noprompt_preferred(self):
-        """efisys_noprompt.bin should be preferred over efisys.bin."""
-        # This tests the logic inline in _do_build.
-        # Since we can't easily unit test the full build, we verify the preference order.
-        # The code does: uefi_file = uefi_noprompt if exists else uefi_boot
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            noprompt = os.path.join(d, "efisys_noprompt.bin")
-            regular = os.path.join(d, "efisys.bin")
-            # Both exist: prefer noprompt
-            open(noprompt, "w").close()
-            open(regular, "w").close()
-            uefi = noprompt if os.path.exists(noprompt) else regular
-            self.assertEqual(uefi, noprompt)
-            # Only regular exists
-            os.remove(noprompt)
-            uefi = noprompt if os.path.exists(noprompt) else regular
-            self.assertEqual(uefi, regular)
+            self._tree(d, noprompt=True, regular=True)
+            _bios, uefi, rel = winiso.choose_boot_files(d)
+            self.assertTrue(uefi.endswith("efisys_noprompt.bin"))
+            self.assertEqual(rel, "efi/microsoft/boot/efisys_noprompt.bin")
+
+    def test_uefi_falls_back_to_efisys(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._tree(d, noprompt=False, regular=True)
+            _bios, uefi, rel = winiso.choose_boot_files(d)
+            self.assertTrue(uefi.endswith(os.path.join("efi", "microsoft", "boot", "efisys.bin")))
+            self.assertEqual(rel, "efi/microsoft/boot/efisys.bin")
+
+    def test_missing_bios_boot(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._tree(d, bios=False)
+            with self.assertRaises(SystemExit):
+                winiso.choose_boot_files(d)
+
+    def test_xorriso_uses_chosen_boot_record(self):
+        argv = winiso._xorriso_argv(
+            "/work/extract", "/work/out.iso", "CCCOMA_X64FRE_EN-GB_DV9",
+            "efi/microsoft/boot/efisys_noprompt.bin",
+        )
+        self.assertEqual(argv[0], "xorriso")
+        self.assertIn("boot/etfsboot.com", argv)
+        self.assertIn("efi/microsoft/boot/efisys_noprompt.bin", argv)
+        self.assertNotIn("-udf", [a.lower() for a in argv])
+        # UEFI entry must not set a short boot-load-size (that truncates efisys).
+        efi_at = argv.index("efi/microsoft/boot/efisys_noprompt.bin")
+        self.assertEqual(argv[efi_at - 1], "-e")
+        self.assertNotIn("-boot-load-size", argv[efi_at:])
+
+
+class TestWimCommands(unittest.TestCase):
+    def test_export_compression_flags(self):
+        solid = winiso._wim_export_argv("src.wim", 6, "out.esd", "solid")
+        self.assertEqual(solid[:5], ["wimlib-imagex", "export", "src.wim", "6", "out.esd"])
+        self.assertIn("--solid", solid)
+        self.assertIn("--compress=LZMS", solid)
+        lzx = winiso._wim_export_argv("src.wim", 1, "out.wim", "lzx")
+        self.assertIn("--compress=LZX", lzx)
+        self.assertNotIn("--solid", lzx)
+        none = winiso._wim_export_argv("src.wim", 1, "out.wim", "none")
+        self.assertIn("--compress=none", none)
+
+    def test_unknown_compression(self):
+        with self.assertRaises(SystemExit):
+            winiso._wim_export_argv("a", 1, "b", "xz")
+
+    def test_update_deletes_onedrive_not_windowsapps(self):
+        lines = winiso._wim_update_lines("/tmp/tuxutil-setup.ps1", None, remove_onedrive=True)
+        text = "\n".join(lines)
+        self.assertIn("delete --force /Windows/System32/OneDriveSetup.exe", text)
+        self.assertIn("add /tmp/tuxutil-setup.ps1 /Windows/Setup/Scripts/tuxutil-setup.ps1", text)
+        self.assertNotIn("WindowsApps", text)
+
+    def test_update_keeps_onedrive_when_asked(self):
+        lines = winiso._wim_update_lines("/tmp/tuxutil-setup.ps1", ["/drv/net"], remove_onedrive=False)
+        text = "\n".join(lines)
+        self.assertNotIn("OneDrive", text)
+        self.assertIn("add /drv/net /Drivers/net", text)
+
+    def test_commands_do_not_contain_password(self):
+        secret = "p<q>&secret"
+        argv = winiso._wim_export_argv("src.wim", 1, "out.esd", "solid")
+        iso = winiso._xorriso_argv("/e", "/o.iso", "LABEL", "efi/microsoft/boot/efisys_noprompt.bin")
+        self.assertNotIn(secret, " ".join(argv + iso))
+
+
+class TestOptionParsing(unittest.TestCase):
+    def test_build_flags_map_onto_options(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command")
+        winiso.register(sub)
+        args = parser.parse_args([
+            "winiso", "build", "in.iso", "-o", "out.iso",
+            "--edition", "6",
+            "--username", "A&B",
+            "--password", "p<q",
+            "--compression", "lzx",
+            "--locale", "de-DE",
+            "--keyboard", "0407:00000407",
+            "--timezone", "W. Europe Standard Time",
+            "--remove-edge",
+            "--no-bypass",
+            "--no-tweaks",
+            "--no-remove-onedrive",
+            "--compact-os",
+            "--drivers", "/tmp/a,/tmp/b",
+            "--keep-apps", "Microsoft.BingNews",
+            "--remove-apps", "Only.This",
+        ])
+        opts = winiso.options_from_args(args)
+        self.assertEqual(opts.edition, "6")
+        self.assertEqual(opts.local_username, "A&B")
+        self.assertEqual(opts.local_password, "p<q")
+        self.assertFalse(opts.bypass_requirements)
+        self.assertFalse(opts.apply_tweaks)
+        self.assertFalse(opts.remove_onedrive)
+        self.assertTrue(opts.remove_edge)
+        self.assertTrue(opts.compact_os)
+        self.assertEqual(opts.compression, "lzx")
+        self.assertEqual(opts.driver_dirs, ["/tmp/a", "/tmp/b"])
+        self.assertEqual(opts.remove_apps, ["Only.This"])
+        self.assertNotIn("p<q", repr(opts))
+
+    def test_7z_package_names(self):
+        from tuxutil import system
+        self.assertEqual(system.tool_package("7z", "arch"), "7zip")
+        self.assertEqual(system.tool_package("7z", "debian"), "p7zip-full")
+        self.assertIn(system.tool_package("7z", "fedora"), ("p7zip", "7zip"))
+        self.assertIn(system.tool_package("7z", "suse"), ("p7zip", "7zip"))
+
+
+class TestLocaleDefaults(unittest.TestCase):
+    def test_en_gb_inferred_from_image_language(self):
+        edition = winiso.Edition(
+            index=6, name="Windows 11 Pro", arch="x86_64",
+            size_bytes=1, build="26300.9457", edition_id="Professional", lang="en-GB",
+        )
+        xml_str = winiso.generate_autounattend(edition, winiso.BuildOptions(), [])
+        self.assertIn("en-GB", xml_str)
+        self.assertIn("0809:00000809", xml_str)
+        self.assertIn("GMT Standard Time", xml_str)
+        self.assertIn("VK7JG-NPHTM-C97JM-9MPGT-3V66T", xml_str)
+        self.assertIn("/IMAGE/NAME", xml_str)
+        self.assertIn("Windows 11 Pro", xml_str)
+
+
+class TestSetupScriptHive(unittest.TestCase):
+    def test_reg_load_default_user_hive(self):
+        script = winiso.generate_setup_script(["Microsoft.BingNews"], True, False, apply_tweaks=True)
+        self.assertIn("reg.exe load", script)
+        self.assertIn("NTUSER.DAT", script)
+        self.assertIn("reg.exe unload", script)
+
+    def test_no_hive_without_tweaks(self):
+        script = winiso.generate_setup_script([], False, False, apply_tweaks=False)
+        self.assertNotIn("reg.exe load", script)
+        self.assertNotIn("OneDriveSetup", script)
 
 
 class TestValidation(unittest.TestCase):

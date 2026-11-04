@@ -54,6 +54,9 @@ PKG_BINARIES = {"pacman": "arch", "apt-get": "debian", "dnf": "fedora", "zypper"
                 "xbps-install": "void", "apk": "alpine", "eopkg": "solus", "emerge": "gentoo"}
 # External tool -> package per family (missing family = same name as the tool).
 TOOL_PACKAGES = {
+    # 7z reads UDF install media. Package is 7zip or p7zip depending on family.
+    "7z": {"arch": "7zip", "debian": "p7zip-full", "fedora": "p7zip", "suse": "7zip",
+           "alpine": "7zip", "void": "p7zip"},
     "xorriso": {},
     "wimlib-imagex": {"arch": "wimlib", "debian": "wimtools", "fedora": "wimlib-utils", "suse": "wimtools", "alpine": "wimlib", "void": "wimlib"},
     "mksquashfs": {"default": "squashfs-tools"},

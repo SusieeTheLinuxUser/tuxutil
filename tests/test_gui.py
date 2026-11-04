@@ -199,10 +199,28 @@ class TestTuxUtilGui(unittest.TestCase):
         tab.download_combo.setCurrentIndex(0)
         self.assertEqual(tab.btn_download.text(), "Open Download Page")
         self.assertEqual(tab.lbl_download_note.text(), "Links expire.")
-        with patch.object(gui.QDesktopServices, "openUrl") as open_url, patch.object(self.win, "run_cli_job") as job:
+        # Without Qt WebEngine the page goes to the system browser.
+        with patch.dict(sys.modules, {"PySide6.QtWebEngineWidgets": None}), \
+                patch.object(gui.QDesktopServices, "openUrl") as open_url, patch.object(self.win, "run_cli_job") as job:
             tab.on_download_clicked()
         self.assertEqual(open_url.call_args[0][0].toString(), "https://example.test/win")
         job.assert_not_called()
+
+    def test_a_caught_iso_goes_to_the_cli_outside_argv_and_anything_else_does_not(self):
+        tab = self.win.tab_winiso
+        dialog, item = MagicMock(), MagicMock()
+        item.url.return_value = gui.QUrl("https://dl.example.test/Win11.iso?sig=a%2Bb")
+        with patch.object(self.win, "run_cli_job") as job, patch.object(gui.QMessageBox, "warning") as warn:
+            tab.catch_download(item, "Windows 11", dialog)
+            item.cancel.assert_called_once()
+            dialog.close.assert_called_once()
+            self.assertEqual(job.call_args[0][:2], (["iso", "download"], "Downloading Windows 11"))
+            self.assertEqual(job.call_args[1]["env"], {"TUXUTIL_DOWNLOAD_URL": "https://dl.example.test/Win11.iso?sig=a%2Bb"})
+            job.reset_mock()
+            item.url.return_value = gui.QUrl("https://dl.example.test/setup.exe")
+            tab.catch_download(item, "Windows 11", dialog)
+        job.assert_not_called()
+        warn.assert_called_once()
 
     def test_pasted_link_goes_to_the_cli_and_junk_does_not(self):
         tab = self.win.tab_linuxiso

@@ -123,6 +123,43 @@ class IsoDownloadTests(unittest.TestCase):
             self.assertEqual(self.run_download("d", folder), 0)
             self.assertEqual((folder / "distro-1.1.iso").read_bytes(), DATA)
 
+    def latest_with_body(self, entry, body):
+        """Run _latest with this server's /SUMS path answering with body."""
+        with patch.object(Handler, "sums", body.encode(), create=True):
+            return isodl._latest({"id": "d", "name": "D", "direct": True, "page": self.base + "/SUMS", **entry})
+
+    def test_fedora_style_list_picks_the_newest_stable_x86_iso(self):
+        good, old, beta = "a" * 64, "b" * 64, "c" * 64
+        rows = [{"version": "9", "arch": "x86_64", "variant": "KDE", "link": "https://x.test/old.iso", "sha256": old},
+                {"version": "10", "arch": "x86_64", "variant": "KDE", "link": "https://x.test/new.iso", "sha256": good},
+                {"version": "11 Beta", "arch": "x86_64", "variant": "KDE", "link": "https://x.test/beta.iso", "sha256": beta},
+                {"version": "11", "arch": "aarch64", "variant": "KDE", "link": "https://x.test/arm.iso", "sha256": beta},
+                {"version": "11", "arch": "x86_64", "variant": "Labs", "link": "https://x.test/labs.iso", "sha256": beta},
+                {"version": "11", "arch": "x86_64", "variant": "KDE", "link": "https://x.test/disk.raw.xz", "sha256": beta}]
+        entry = {"releases_url": self.base + "/SUMS", "variant": "KDE"}
+        self.assertEqual(self.latest_with_body(entry, json.dumps(rows)), ("https://x.test/new.iso", "new.iso", good))
+
+    def test_pop_style_build_uses_its_url_and_hash(self):
+        body = json.dumps({"url": "https://x.test/pop_20.iso", "sha_sum": "A" * 64})
+        self.assertEqual(self.latest_with_body({"build_url": self.base + "/SUMS"}, body),
+                         ("https://x.test/pop_20.iso", "pop_20.iso", "a" * 64))
+
+    def test_page_link_gets_its_hash_from_the_file_beside_it(self):
+        with patch.object(isodl, "_read", return_value='<a href="https://x.test/2/distro-2.iso">'), \
+                patch.object(isodl, "_from_sums", return_value=("distro-2.iso", "d" * 64)) as lookup:
+            result = isodl._latest({"name": "D", "page": "https://x.test/", "page_regex": r"https://[^\"]+/distro-\d+\.iso"})
+        self.assertEqual(result, ("https://x.test/2/distro-2.iso", "distro-2.iso", "d" * 64))
+        self.assertEqual(lookup.call_args.args, ("https://x.test/2/distro-2.iso.sha256", r"distro\-2\.iso"))
+
+    def test_a_listing_without_a_usable_hash_never_downloads_unverified(self):
+        for entry, body in (({"build_url": self.base + "/SUMS"}, json.dumps({"url": "https://x.test/a.iso", "sha_sum": ""})),
+                            ({"build_url": self.base + "/SUMS"}, "<html>not json</html>"),
+                            ({"build_url": self.base + "/SUMS"}, "[]"),
+                            ({"releases_url": self.base + "/SUMS", "variant": "KDE"}, "[]"),
+                            ({"page_regex": r"https://nothing-here\.iso"}, "<html></html>")):
+            with self.subTest(entry=entry, body=body), self.assertRaisesRegex(ValueError, "no longer lists"):
+                self.latest_with_body(entry, body)
+
     def test_catalog_dry_run_needs_no_network(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(isodl.system, "DRY_RUN", True), \
                 patch.object(isodl, "_request", side_effect=AssertionError("network used")):
@@ -130,7 +167,7 @@ class IsoDownloadTests(unittest.TestCase):
 
     def test_every_direct_entry_can_be_resolved(self):
         for entry in isodl.CATALOG:
-            self.assertEqual(entry["direct"], "checksum_url" in entry, entry["id"])
+            self.assertEqual(entry["direct"], bool({"checksum_url", "releases_url", "build_url", "page_regex"} & set(entry)), entry["id"])
             self.assertTrue(entry["page"].startswith("https://"), entry["id"])
 
     def test_checksum_mismatch_deletes_partial(self):

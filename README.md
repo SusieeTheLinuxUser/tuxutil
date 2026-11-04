@@ -10,7 +10,7 @@
 curl -fsSL https://raw.githubusercontent.com/SusieeTheLinuxUser/tuxutil/main/run.sh | sh
 ```
 
-This runs the latest code from the `main` branch in your cache; you can read [`run.sh`](run.sh) first. It needs Python 3.10 or newer, plus `curl` or `wget` and `tar`. The GUI downloads PySide6-Essentials to the cache if needed. Run `tuxutil doctor` to see which tools are missing, or `tuxutil doctor --install` to install them.
+This runs the latest code from the `main` branch in your cache; you can read [`run.sh`](run.sh) first. It needs Python 3.10 or newer, plus `curl` or `wget` and `tar`. The GUI downloads PySide6 to the cache if needed (about 260 MB). Run `tuxutil doctor` to see which tools are missing, or `tuxutil doctor --install` to install them.
 
 For a permanent install in `~/.local/bin`:
 
@@ -53,7 +53,9 @@ If the stick stays first in the boot order, the PC goes back into Setup after th
 
 ### Download an ISO
 
-The GUI has this in the Source section of both ISO pages. `tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download ID` downloads Arch, Ubuntu, Linux Mint or Garuda and checks the official checksum. Other entries are marked `direct: false` because they have no stable link, so open their `page` in a browser. For Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
+The GUI has this in the Source section of both ISO pages. Pick an ISO and press Download, and the finished file fills in the source field. `tuxutil iso list --json` shows the catalog. `tuxutil iso download ID` downloads any Linux entry (Arch, CachyOS, Linux Mint, Ubuntu, Fedora KDE, Pop!_OS, Zorin, Manjaro, Garuda) and checks the official checksum.
+
+Windows 11 is different. Microsoft has no permanent link and blocks scripts from its download service, so TuxUtil doesn't script it. The GUI shows Microsoft's own page in a window: pick your language, press its download button, and TuxUtil takes the file from there. That window needs Qt WebEngine (a separate package on some distros, such as `qt6-webengine` on Arch). Without it the page opens in your browser and you paste the link. A Windows download has no checksum to compare, so TuxUtil prints the file's hash instead. On the command line, pass a copied link to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
 
 ### Custom Linux ISO
 

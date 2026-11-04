@@ -2,7 +2,7 @@
 
 [winutil](https://github.com/ChrisTitusTech/winutil), but for Linux. It detects your distro and gives you one place to install apps, apply tweaks, update the system, build custom Windows 11 and Linux ISOs, and flash them to a USB stick. Everything works from a GUI or the command line.
 
-> **Early release.** The ISO builders are tested in virtual machines, but several features have never run on real hardware. See [What has been tested](#what-has-been-tested) before you rely on it. Flashing erases the target drive.
+> **Early release.** The ISO builders are tested in virtual machines, but several features have never run on real hardware, including USB flashing. See [What has been tested](#what-has-been-tested) before you rely on it. Flashing erases the target drive.
 
 ## Install
 
@@ -53,7 +53,7 @@ If the stick stays first in the boot order, the PC goes back into Setup after th
 
 ### Download an ISO
 
-`tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download ID` downloads Arch, Ubuntu, Linux Mint or Garuda and checks the official checksum. Other entries are marked `direct: false` because they have no stable link, so open their `page` in a browser. For Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
+The GUI has this in the Source section of both ISO pages. `tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download ID` downloads Arch, Ubuntu, Linux Mint or Garuda and checks the official checksum. Other entries are marked `direct: false` because they have no stable link, so open their `page` in a browser. For Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
 
 ### Custom Linux ISO
 
@@ -82,7 +82,11 @@ A flash can't be cancelled from the GUI yet, because the writer runs as root. Th
 
 ## What has been tested
 
-Tests ran in QEMU/KVM on image files. **Nothing has been tested on real hardware yet.**
+ISO tests ran in QEMU/KVM on image files. **No custom ISO or USB stick has been tested on real hardware yet.**
+
+**Real PC:** on one CachyOS desktop, `install.sh` worked, the GUI opened, and the Apps page installed and removed GIMP.
+
+**Downloads:** a full Arch download ran for real, including interrupting and resuming it, and the checksum matched. Ubuntu, Mint and Garuda were only checked for a working link and checksum list. The ISOs they lead to may be newer than the ones in the table below.
 
 **Windows 11:** installed to the desktop from one Windows 11 ISO under UEFI and BIOS, with no TPM and no network, and from a flashed stick image. Other editions, languages and Secure Boot are untested.
 
@@ -102,8 +106,7 @@ Tests ran in QEMU/KVM on image files. **Nothing has been tested on real hardware
 **Never run for real:**
 
 - Writing to a real USB stick (only image files)
-- Applying tweaks or installing apps
-- Anything that needs root
+- Applying tweaks
 
 Please open an issue if you try any of these, whichever way it goes.
 

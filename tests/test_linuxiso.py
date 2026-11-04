@@ -129,6 +129,17 @@ class ScratchTest(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in tmp.iterdir()), ["in.iso", "out.iso.work"])
 
 
+class ScrubTest(unittest.TestCase):
+    def test_removes_folder_when_namespaces_fail_or_unshare_is_missing(self):
+        for result in ({"return_value": None}, {"side_effect": FileNotFoundError}):
+            with tempfile.TemporaryDirectory() as folder:
+                target = Path(folder, "scratch")
+                target.mkdir()
+                with patch("tuxutil.linuxiso.subprocess.run", **result):
+                    linuxiso.scrub(target)
+                self.assertFalse(target.exists())
+
+
 class SelinuxTest(unittest.TestCase):
     def test_only_enforcing_counts(self):
         with tempfile.TemporaryDirectory() as root:

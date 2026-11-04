@@ -1353,10 +1353,15 @@ def scrub(path):
         return
     # Files created as non-root inside the user namespace are owned by subuids.
     # The calling user cannot unlink those; root inside a fresh user namespace can.
-    subprocess.run(["unshare", "--map-auto", "--map-root-user", "chmod", "-R", "u+w", str(path)],
-                   check=False)
-    subprocess.run(["unshare", "--map-auto", "--map-root-user", "rm", "-rf", "--", str(path)],
-                   check=False)
+    try:
+        subprocess.run(["unshare", "--map-auto", "--map-root-user", "chmod", "-R", "u+w", str(path)],
+                       check=False)
+        subprocess.run(["unshare", "--map-auto", "--map-root-user", "rm", "-rf", "--", str(path)],
+                       check=False)
+    except OSError:
+        pass
+    # Without user namespaces, nothing in here can be owned by a subuid.
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _warn(message):

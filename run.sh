@@ -69,8 +69,15 @@ run_app() {
     cache_base=${XDG_CACHE_HOME:-$HOME/.cache}/tuxutil
     app_dir=$cache_base/app
     python_bin=python3
-    is_gui=0
-    if [ "$#" -eq 0 ] || [ "$1" = gui ]; then is_gui=1; fi
+    # With no subcommand the app opens the GUI, so only another subcommand or flag rules it out.
+    is_gui=1
+    for arg in "$@"; do
+        case $arg in
+            --dry-run) ;;
+            gui) break ;;
+            *) is_gui=0; break ;;
+        esac
+    done
 
     if [ "$is_gui" -eq 1 ] && ! python3 -c 'import PySide6.QtWidgets' >/dev/null 2>&1; then
         venv_python=$cache_base/venv/bin/python

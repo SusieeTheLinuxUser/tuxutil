@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -517,9 +518,9 @@ def mode_from_flags(hybrid, has_windows):
 
 
 def hybrid_boot(iso):
-    """True when xorriso reports an isohybrid system area.
+    """True when xorriso reports an MBR or GPT system area, such as isohybrid or grub2-mbr.
 
-    This does not list files. Microsoft ISOs have no hybrid system area;
+    This does not list files. Microsoft ISOs have no system area;
     their files are read with 7z.
     """
     proc = subprocess.run(
@@ -529,7 +530,7 @@ def hybrid_boot(iso):
     text = (proc.stdout or "") + "\n" + (proc.stderr or "")
     if proc.returncode != 0 and "isohybrid" not in text.lower() and "System area" not in text and "No System Area" not in text:
         refuse(f"xorriso could not inspect {iso}: {text.strip()}")
-    return "isohybrid" in text.lower()
+    return re.search(r"System area summary:.*\b(MBR|GPT)\b", text) is not None
 
 
 def parse_7z_slt(text):

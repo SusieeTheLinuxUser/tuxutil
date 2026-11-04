@@ -8,7 +8,7 @@ CATALOG = Path(__file__).with_name("apps.json")
 # One process lists every installed name. ponytail: flatpak --columns needs flatpak >= 1.8.
 NATIVE_QUERY = {
     "arch": ["pacman", "-Qq"],
-    "debian": ["dpkg-query", "-W", "-f", "${Package}\n"],
+    "debian": ["dpkg-query", "-W", "-f", "${db:Status-Status} ${Package}\n"],
     "fedora": ["rpm", "-qa", "--qf", "%{NAME}\\n"],
     "suse": ["rpm", "-qa", "--qf", "%{NAME}\\n"],
 }
@@ -29,6 +29,9 @@ def _names(cmd):
 
 def installed_names(family):
     native = _names(NATIVE_QUERY.get(family))
+    if family == "debian":
+        # dpkg also lists removed packages that left their config files behind.
+        native = {line.split()[1] for line in native if line.startswith("installed ")}
     flatpaks = set()
     for line in _names(["flatpak", "list", "--app", "--columns=application"]):
         # A header, if a future flatpak prints one, has no dot. App ids do.
@@ -108,11 +111,22 @@ def dedupe(items):
     return out
 
 
-def plan(apps, distro):
-    """Native packages in one group, flatpak ids in another. Native wins when both exist."""
+def plan(apps, distro, installed=None):
+    """Native packages in one group, flatpak ids in another. Native wins when both exist.
+
+    With installed=(native names, flatpak ids), an app that has any variant installed
+    plans exactly those, so removing it removes what is really there.
+    """
     native, flatpaks, unavailable = [], [], []
     for app in apps:
         pkgs = packages_for(app, distro)
+        if installed:
+            have_native = [pkg for pkg in pkgs if pkg in installed[0]]
+            have_flatpak = [app["flatpak"]] if app.get("flatpak") in installed[1] else []
+            if have_native or have_flatpak:
+                native.extend(have_native)
+                flatpaks.extend(have_flatpak)
+                continue
         if pkgs:
             native.extend(pkgs)
         elif app.get("flatpak"):
@@ -137,7 +151,8 @@ def commands_for(native, flatpaks, family, verb):
             ]))
             steps.append((False, ["flatpak", "install", "--user", "-y", "flathub", *flatpaks]))
         else:
-            steps.append((False, ["flatpak", "uninstall", "--user", "-y", *flatpaks]))
+            # No --user: `apps list` counts per-user and system-wide installs alike.
+            steps.append((False, ["flatpak", "uninstall", "-y", *flatpaks]))
     return steps
 
 
@@ -184,7 +199,8 @@ def cmd_list(args):
 def change(args, verb):
     distro = system.detect()
     apps = select(load(), args.ids)
-    native, flatpaks, unavailable = plan(apps, distro)
+    installed = installed_names(distro.family) if verb == "remove" else None
+    native, flatpaks, unavailable = plan(apps, distro, installed)
     if unavailable:
         raise SystemExit(f"Not available on {distro.family}: {', '.join(unavailable)}")
     steps = commands_for(native, flatpaks, distro.family, verb)

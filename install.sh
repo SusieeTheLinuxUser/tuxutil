@@ -162,7 +162,8 @@ ensure_python() {
 }
 
 ensure_venv_module() {
-    if python3 -c 'import venv' >/dev/null 2>&1; then
+    # Debian's python3 can import venv but has no ensurepip, which creating a venv needs.
+    if python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
         return 0
     fi
     fam=$(family)
@@ -180,7 +181,8 @@ ensure_venv_module() {
 
 install_project() {
     src=$1
-    if "$VENV/bin/python" -c 'import setuptools' >/dev/null 2>&1; then
+    # Without isolation pip won't fetch the setuptools>=68 that pyproject.toml asks for.
+    if "$VENV/bin/python" -c 'import setuptools, sys; sys.exit(int(setuptools.__version__.split(".")[0]) < 68)' >/dev/null 2>&1; then
         "$VENV/bin/python" -m pip install --upgrade --no-build-isolation "$src"
     else
         "$VENV/bin/python" -m pip install --upgrade "$src"

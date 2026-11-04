@@ -66,7 +66,7 @@ tuxutil flash write custom.iso /dev/sdX --confirm /dev/sdX
 
 This needs root and asks for it. It refuses any drive that holds your running system or swap, or has a filesystem mounted outside `/media`, `/run/media` and `/mnt`. Filesystems mounted under those folders, such as a USB stick your desktop opened, **are unmounted and erased**, so check the device name. **Everything on the target drive is erased.** Windows ISOs get a FAT32 stick, with the install image split if it is over the FAT32 file size limit. Other ISOs are written as they are. Writes are verified unless you pass `--no-verify`.
 
-A flash can't be cancelled from the GUI yet, because the writer runs as root. If you close the window it keeps writing, so don't remove the drive until its activity stops.
+A flash can't be cancelled from the GUI yet, because the writer runs as root. The window stays open until the flash finishes.
 
 ## What has been tested
 

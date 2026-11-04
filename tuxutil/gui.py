@@ -727,11 +727,13 @@ if HAS_PYSIDE6:
             self.load_doctor_info()
 
         def closeEvent(self, event):
+            if self.active_process and self.active_job_is_flash:
+                # The root writer shares this window's output pipe, so closing could kill it mid-write.
+                QMessageBox.information(self, "USB Flash Running", "Wait for the USB flash to finish, then close this window.")
+                event.ignore()
+                return
             if self.active_process:
                 text = "A job is still running. Closing will stop it."
-                if self.active_job_is_flash:
-                    text = ("A USB flash is still running. It runs as root and keeps writing after this window closes, "
-                            "with no way to see when it ends.\n\nDon't remove the drive until its activity stops.")
                 answer = QMessageBox.warning(self, "Job Running", text + "\n\nClose anyway?",
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if answer != QMessageBox.Yes:

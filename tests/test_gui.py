@@ -6,7 +6,7 @@ import shlex
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tuxutil import gui
 
@@ -444,6 +444,20 @@ class ProcessFailureTest(unittest.TestCase):
             self.assertTrue(wait_until(lambda: self.win.active_process is None))
             self.win.run_cli_job(["pass"], "Other")
             self.assertTrue(self.win.btn_cancel_job.isEnabled())
+            self.assertTrue(wait_until(lambda: self.win.active_process is None))
+
+    def test_window_stays_open_during_a_flash(self):
+        with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}), \
+                patch("PySide6.QtWidgets.QMessageBox.information") as told:
+            self.win.run_cli_job(["import time; time.sleep(30)"], "Flash", is_flash=True)
+            proc = self.win.active_process
+            self.assertTrue(proc.waitForStarted(5000))
+            event = MagicMock()
+            self.win.closeEvent(event)
+            event.ignore.assert_called_once()
+            told.assert_called_once()
+            self.assertEqual(proc.state(), type(proc).ProcessState.Running)
+            proc.kill()
             self.assertTrue(wait_until(lambda: self.win.active_process is None))
 
     def test_cancel_timer_does_not_kill_the_next_job(self):

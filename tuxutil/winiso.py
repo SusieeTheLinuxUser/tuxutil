@@ -916,13 +916,10 @@ def _get_editions(iso_path: str) -> list:
 
 
 def _own_work_dir(work_dir: Optional[str], output_path: str) -> str:
-    """A directory the build may delete. --work-dir can be any folder, so use a new one inside it."""
-    if work_dir:
-        os.makedirs(work_dir, exist_ok=True)
-        return tempfile.mkdtemp(prefix="tuxutil-winiso-", dir=os.path.abspath(work_dir))
-    path = output_path + ".work"
-    os.makedirs(path, exist_ok=True)
-    return path
+    """A new folder the build may delete, so cleanup can't remove anything already there."""
+    parent = os.path.abspath(work_dir) if work_dir else os.path.dirname(output_path)
+    os.makedirs(parent, exist_ok=True)
+    return tempfile.mkdtemp(prefix="tuxutil-winiso-", dir=parent)
 
 
 def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Optional[str] = None):
@@ -949,8 +946,6 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     work_dir = _own_work_dir(work_dir, output_path)
     _check_disk_space(work_dir, iso_path)
     extract_dir = os.path.join(work_dir, "extract")
-    if os.path.exists(extract_dir):
-        shutil.rmtree(extract_dir)
 
     state = {"output": False}
 

@@ -567,10 +567,13 @@ class TestWorkDirAndQuoting(unittest.TestCase):
             self.assertNotEqual(own, os.path.abspath(folder))
             self.assertEqual(os.path.dirname(own), os.path.abspath(folder))
 
-    def test_default_work_dir_follows_output(self):
+    def test_default_work_dir_is_new_folder_next_to_output(self):
         with tempfile.TemporaryDirectory() as folder:
-            out = os.path.join(folder, "out.iso")
-            self.assertEqual(winiso._own_work_dir(None, out), out + ".work")
+            existing = os.path.join(folder, "out.iso.work")
+            os.mkdir(existing)
+            own = winiso._own_work_dir(None, os.path.join(folder, "out.iso"))
+            self.assertNotEqual(own, existing)
+            self.assertEqual(os.path.dirname(own), folder)
 
     def test_driver_destination_with_space_is_quoted(self):
         lines = winiso._wim_update_lines("/s.ps1", ["/home/u/My Drivers"], False)

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 
-from . import __version__, apps, flash, gui, linuxiso, system, tweaks, winiso
+from . import __version__, apps, flash, gui, isodl, linuxiso, system, tweaks, winiso
 
 
 def cmd_doctor(args):
@@ -49,7 +49,7 @@ def main(argv=None):
     p = sub.add_parser("update", help="update the system and flatpaks")
     p.set_defaults(func=cmd_update)
 
-    for module in (apps, tweaks, winiso, linuxiso, flash, gui):
+    for module in (apps, tweaks, winiso, linuxiso, flash, isodl, gui):
         module.register(sub)
 
     args = parser.parse_args(argv)

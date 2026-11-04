@@ -25,6 +25,8 @@ tuxutil apps list --json
 tuxutil apps install ID...
 tuxutil tweaks list --json
 tuxutil tweaks apply ID...     # tweaks undo ID... reverses them
+tuxutil iso list --json
+tuxutil iso download arch --dir ~/Downloads
 ```
 
 ### Custom Windows 11 ISO
@@ -42,6 +44,10 @@ By default, Setup stops at the disk screen so you choose the disk. `--wipe-disk`
 `--password` is stored in plain text in the ISO, and it stays there. First logon only removes it from the installed Windows, so keep that ISO private or delete it. Other processes can read command-line flags while a build runs, so on a shared machine set the `TUXUTIL_PASSWORD` environment variable instead. The GUI already does this.
 
 If the stick stays first in the boot order, the PC goes back into Setup after the first reboot. Remove it at that point, or set the internal disk first.
+
+### Download an ISO
+
+`tuxutil iso list --json` shows supported live Linux ISO sources and the official Windows 11 download page. `tuxutil iso download ID` downloads Arch, Ubuntu, Linux Mint or Garuda and checks the official checksum. Other entries are marked `direct: false` because they have no stable link, so open their `page` in a browser. For Windows 11, Microsoft's download links are temporary, and a copied link can be passed to `tuxutil iso download URL`. A pasted link can't be checked unless you also pass `--sha256`, so TuxUtil prints the file's hash for you to compare. Downloads resume from a `.part` file and are saved in `~/Downloads` unless you pass `-o FILE` or `--dir DIR`.
 
 ### Custom Linux ISO
 

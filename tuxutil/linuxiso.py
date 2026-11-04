@@ -1261,7 +1261,7 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
 
 def _sibling(paths, primary, suffix):
     """casper/minimal.standard.live.squashfs -> casper/minimal.standard.live.size."""
-    if not primary.endswith(".squashfs") and not primary.endswith(".sfs"):
+    if not primary.endswith((".squashfs", ".sfs", ".erofs")):
         return ""
     stem = primary[: primary.rfind(".")]
     candidate = stem + suffix
@@ -1362,6 +1362,8 @@ def scrub(path):
         pass
     # Without user namespaces, nothing in here can be owned by a subuid.
     shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        _warn(f"Could not remove {path}. Delete it yourself; it can hold several GB.")
 
 
 def _warn(message):

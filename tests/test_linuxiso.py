@@ -129,6 +129,12 @@ class ScratchTest(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in tmp.iterdir()), ["in.iso", "out.iso.work"])
 
 
+class SiblingTest(unittest.TestCase):
+    def test_erofs_root_finds_its_checksum(self):
+        paths = ["/arch/x86_64/airootfs.erofs", "/arch/x86_64/airootfs.sha512"]
+        self.assertEqual(linuxiso._sibling(paths, paths[0], ".sha512"), paths[1])
+
+
 class ScrubTest(unittest.TestCase):
     def test_removes_folder_when_namespaces_fail_or_unshare_is_missing(self):
         for result in ({"return_value": None}, {"side_effect": FileNotFoundError}):

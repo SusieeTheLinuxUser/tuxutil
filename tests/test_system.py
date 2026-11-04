@@ -3,6 +3,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
@@ -98,6 +99,23 @@ class RootAndErrorsTest(unittest.TestCase):
         self.assertEqual(text.strip().count("\n"), 0)
         self.assertIn("Command not found (exit 127): ufw", text)
         self.assertNotIn("Traceback", text)
+
+
+class AtomicOutputTest(unittest.TestCase):
+    def test_keeps_the_old_file_until_the_new_one_is_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.iso"
+            out.write_text("old")
+            with self.assertRaises(RuntimeError), system.atomic_output(out) as partial:
+                Path(partial).write_text("half")
+                self.assertEqual(out.read_text(), "old")
+                raise RuntimeError
+            self.assertEqual(out.read_text(), "old")
+            self.assertEqual([p.name for p in Path(tmp).iterdir()], ["out.iso"])
+            with system.atomic_output(out) as partial:
+                Path(partial).write_text("new")
+            self.assertEqual(out.read_text(), "new")
+            self.assertEqual([p.name for p in Path(tmp).iterdir()], ["out.iso"])
 
 
 if __name__ == "__main__":

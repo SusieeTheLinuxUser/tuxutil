@@ -1153,7 +1153,6 @@ if HAS_PYSIDE6:
 
             # Hard rule: Passing `--confirm` is only ever done after that typed confirmation.
             cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path]
-            self.active_job_is_flash = True
             self.run_cli_job(
                 cmd,
                 f"Flashing {dev.get('model', 'Drive')} ({device_path})",

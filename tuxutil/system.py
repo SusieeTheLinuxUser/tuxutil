@@ -4,6 +4,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,6 +166,20 @@ def query(cmd, timeout=15):
                               check=False, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return subprocess.CompletedProcess(list(cmd), 127, "", "")
+
+
+@contextmanager
+def atomic_output(path):
+    """Yield a temporary path beside path. It replaces path only if the block succeeds."""
+    partial = f"{path}.partial"
+    try:
+        if os.path.exists(partial):
+            os.remove(partial)
+        yield partial
+        os.replace(partial, path)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
 
 
 def progress(percent, message=""):

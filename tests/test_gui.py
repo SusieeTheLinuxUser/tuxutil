@@ -13,7 +13,7 @@ from tuxutil import gui
 try:
     import PySide6
     from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtWidgets import QApplication, QLineEdit
+    from PySide6.QtWidgets import QApplication, QLineEdit, QStyle, QStyleOptionGroupBox, QWidget
     HAS_PYSIDE6 = True
 except ImportError:
     HAS_PYSIDE6 = False
@@ -111,6 +111,59 @@ class TestTuxUtilGui(unittest.TestCase):
                 self.win.close()
             pump_events(80)
             self.win = None
+
+    def test_sidebar_and_pages_stay_in_step(self):
+        self.win.nav.setCurrentItem(self.win.nav_items[4])
+        self.assertEqual(self.win.tabs.currentIndex(), 4)
+        self.win.tabs.setCurrentIndex(2)
+        self.assertEqual(self.win.nav.currentItem().text(), "Tweaks")
+
+    def test_group_titles_clear_their_contents(self):
+        """The owner's bug: inputs were drawn on top of the card titles."""
+        for i in range(self.win.tabs.count()):
+            self.win.tabs.setCurrentIndex(i)
+            pump_events(50)
+            for box in self.win.tabs.currentWidget().findChildren(gui.QGroupBox):
+                if not box.isVisible():
+                    continue
+                opt = QStyleOptionGroupBox()
+                opt.initFrom(box)
+                opt.text = box.title()
+                opt.subControls = QStyle.SC_All
+                title = box.style().subControlRect(QStyle.CC_GroupBox, opt, QStyle.SC_GroupBoxLabel, box)
+                self.assertTrue(title.isValid())
+                for child in box.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+                    if child.isVisibleTo(box):
+                        self.assertLess(title.bottom(), child.geometry().top(), box.title())
+
+    def test_log_stays_out_of_the_way_until_a_job_runs(self):
+        self.assertFalse(self.win.log_text.isVisible())
+        self.assertFalse(self.win.progress_bar.isVisible())
+        self.assertFalse(self.win.btn_cancel_job.isVisible())
+        self.win.run_cli_job(["apps", "install", "x"], "Job")
+        self.assertTrue(self.win.log_text.isVisible())
+        self.assertTrue(self.win.progress_bar.isVisible())
+        self.assertTrue(self.win.btn_cancel_job.isVisible())
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertFalse(self.win.progress_bar.isVisible())
+        self.assertFalse(self.win.btn_cancel_job.isVisible())
+        self.assertTrue(self.win.log_text.isVisible())
+
+    def test_optional_choice_sends_nothing_until_picked(self):
+        form = gui.DynamicFormWidget([
+            {"flag": "--compression", "type": "choice", "label": "C", "default": [], "choices": ["gzip", "xz"]},
+            {"flag": "--mode", "type": "choice", "label": "M", "default": "b", "choices": ["a", "b"]},
+        ])
+        self.assertEqual(form.collect_args(), ["--mode", "b"])
+        form.fields["--compression"][1].setCurrentText("xz")
+        self.assertEqual(form.collect_args(), ["--compression", "xz", "--mode", "b"])
+
+    def test_clicking_an_edition_fills_the_edition_option(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--edition", "type": "str", "label": "E"}])
+        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
+        tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
+        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
 
     def test_window_properties_and_tabs(self):
         self.assertEqual(self.win.windowTitle(), "TuxUtil")

@@ -171,7 +171,7 @@ def query(cmd, timeout=15):
 @contextmanager
 def atomic_output(path):
     """Yield a temporary path beside path. It replaces path only if the block succeeds."""
-    partial = f"{path}.partial"
+    partial = f"{path}.{os.getpid()}.partial"
     try:
         if os.path.exists(partial):
             os.remove(partial)

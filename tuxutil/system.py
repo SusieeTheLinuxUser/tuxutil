@@ -147,7 +147,8 @@ def as_root_all(cmds):
 
 def run(cmd, *, check=True, capture=False, **kwargs):
     """Run an external command, echoing it. Honors DRY_RUN. Never uses a shell."""
-    print("$ " + shlex.join(map(str, cmd)), flush=True)
+    # Captured commands feed --json listings, so their echo must stay off stdout.
+    print("$ " + shlex.join(map(str, cmd)), flush=True, file=sys.stderr if capture else sys.stdout)
     if DRY_RUN:
         return subprocess.CompletedProcess(cmd, 0, "", "")
     if capture:

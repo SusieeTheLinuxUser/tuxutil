@@ -30,7 +30,9 @@ def unit_files():
     result = system.query(["systemctl", "list-unit-files", "--no-legend", "--no-pager"])
     if result.returncode != 0 or not result.stdout.strip():
         return None
-    return {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
+    # A masked unit can't be started or enabled, so it counts as missing.
+    rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    return {row[0] for row in rows if not (len(row) > 1 and row[1].startswith("masked"))}
 
 
 def unavailability_reason(tweak, family, units):
@@ -81,7 +83,7 @@ def cmd_list(args):
         return 0
     for row in rows:
         if not row["available"]:
-            state = "unavailable"
+            state = f"unavailable ({row['reason']})"
         elif row["applied"] is None:
             state = "unknown"
         elif row["applied"]:

@@ -363,9 +363,8 @@ class WriteGuardTest(unittest.TestCase):
 
     def test_closing_stdin_stops_the_real_writer(self):
         proc, target = self.run_real_writer(subprocess.PIPE, "--cancel-on-eof")
-        proc.stdin.close()
-        output = proc.stdout.read()
-        self.assertEqual(proc.wait(timeout=60), 143, output)
+        output, _ = proc.communicate(timeout=60)  # Closes stdin.
+        self.assertEqual(proc.returncode, 143, output)
         self.assertIn("cancelled", output)
         self.assertFalse(target.read_bytes().endswith(b"END"))
 
@@ -393,8 +392,8 @@ class WriteGuardTest(unittest.TestCase):
 
     def test_closed_stdin_cannot_stop_a_flash_unless_asked(self):
         proc, target = self.run_real_writer(subprocess.DEVNULL)
-        output = proc.stdout.read()
-        self.assertEqual(proc.wait(timeout=60), 0, output)
+        output, _ = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, output)
         self.assertNotIn("cancelled", output)
         self.assertTrue(target.read_bytes().endswith(b"END"))
 

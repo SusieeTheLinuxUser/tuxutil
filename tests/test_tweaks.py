@@ -149,6 +149,12 @@ class DryRunTest(unittest.TestCase):
                 self.assertEqual(rc, 0, err)
                 self.assertEqual(commands(out), expected_commands(tweak, "undo"), tweak["id"])
 
+    def test_a_masked_unit_counts_as_missing(self):
+        listing = "a.service enabled enabled\nb.service masked enabled\nc.service masked-runtime -\n"
+        result = subprocess.CompletedProcess([], 0, listing, "")
+        with mock.patch.object(system, "query", return_value=result):
+            self.assertEqual(tweaks.unit_files(), {"a.service"})
+
     def test_unavailable_family_is_an_error(self):
         with as_family("arch"):
             rc, out, err = invoke(["--dry-run", "tweaks", "apply", "disable-popularity-contest"])

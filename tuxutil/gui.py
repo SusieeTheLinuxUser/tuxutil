@@ -612,7 +612,7 @@ if HAS_PYSIDE6:
                     node.setText(1, risk)
                     applied = it.get("applied")
                     node.setText(2, "Yes" if applied is True else ("No" if applied is False else "Unknown"))
-                    node.setText(3, "Yes" if available else "No (Unsupported)")
+                    node.setText(3, "Yes" if available else f"No ({it.get('reason') or 'Unsupported'})")
                     node.setText(4, it.get("description", ""))
 
                     node.setToolTip(4, it.get("description", ""))

@@ -776,9 +776,10 @@ def inner_build(args, scratch):
         upper = [p for p in paths if p.endswith(".sfs") and p != info["squashfs"]
                  and Path(p).parent == Path(info["squashfs"]).parent]
         if upper:
-            # ponytail: miso stacks these above the root we edit. Edit the top layer if that matters.
-            _warn(f"Files also in {', '.join(Path(p).name for p in upper)} override your overlay and "
-                  "hostname on the live system.")
+            # ponytail: miso stacks these above the root we edit. The overlay can
+            # still be hidden by them; --hostname is written into the top layer.
+            _warn(f"Files also in {', '.join(Path(p).name for p in upper)} sit above the root "
+                  "being edited and can hide paths they also ship.")
 
         system.progress(40, "applying overlay, hostname, first boot")
         _apply_identity(root, args)
@@ -802,6 +803,9 @@ def inner_build(args, scratch):
         system.progress(70, "repacking root filesystem")
         built = _repack(repack, scratch, args.compression)
         changed = {repack["iso_path"]: built}
+        if args.hostname and upper:
+            # miso layers above the root shadow its /etc/hostname at boot.
+            changed.update(_patch_upper_hostname(iso, upper, scratch, args))
 
         system.progress(82, "updating boot entries and metadata")
         deletes, maps = _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed)
@@ -842,6 +846,49 @@ def _materialize(iso, info, scratch):
         return root, {"dir": root, "kind": "erofs", "iso_path": iso_path, "pseudo": None,
                       "compression": _erofs_alg(image), "block": None, "image": image}
     raise SystemExit(f"Unrecognized root image format in {info['squashfs']} ({kind}).")
+
+
+# miso (Manjaro) stacks these above rootfs, topmost first: the initramfs hook
+# builds its overlay lowerdir as livefs:mhwdfs:desktopfs:rootfs.
+MISO_UPPER_LAYERS = ("livefs", "mhwdfs", "desktopfs")
+
+
+class _HostnameOnly:
+    overlay = None
+    first_boot = None
+
+    def __init__(self, hostname):
+        self.hostname = hostname
+
+
+def _patch_upper_hostname(iso, upper, scratch, args):
+    """--hostname must also land in the top miso layer, not only in rootfs.
+
+    miso stacks livefs above rootfs, and Manjaro's livefs ships /etc/hostname,
+    so the copy _apply_identity writes into rootfs.sfs is shadowed on the live
+    system and the boot shows "manjaro". Patch the topmost upper layer that
+    ships /etc/hostname too. Returns {iso path: new squashfs}, like `changed`.
+    """
+    by_name = {Path(p).name: p for p in upper}
+    for name in MISO_UPPER_LAYERS:
+        path = by_name.get(name + ".sfs")
+        if not path:
+            continue
+        image = scratch / name / "image.sfs"
+        image.parent.mkdir(parents=True, exist_ok=True)
+        extract_file(iso, path, image)
+        listing = subprocess.run(["unsquashfs", "-lln", str(image)],
+                                  stdout=subprocess.PIPE, errors="replace", check=False).stdout
+        if not re.search(r"(?m)etc/hostname\s*$", listing):
+            continue
+        top = scratch / name / "root"
+        pseudo, comp, block = _unpack_squash(image, top)
+        _apply_identity(top, _HostnameOnly(args.hostname))
+        repack = {"dir": top, "kind": "squashfs", "iso_path": path, "pseudo": pseudo,
+                  "compression": comp, "block": block, "image": image}
+        # A private scratch dir, so this repack cannot overwrite the root one.
+        return {path: _repack(repack, scratch / name, args.compression)}
+    return {}
 
 
 def _materialize_layered(iso, layers, scratch):
@@ -1187,8 +1234,7 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
     maps = {}
     work = scratch / "meta"
     work.mkdir(parents=True, exist_ok=True)
-    built = changed[info["layers"][-1] if info.get("layers") else info["squashfs"]]
-    # `changed` was keyed by iso path already.
+    # `changed` was keyed by iso path already, and every entry is a host file.
     iso_to_host = dict(changed)
 
     kernel_args = list(args.kernel_arg or [])
@@ -1227,12 +1273,13 @@ def _metadata_and_boot(iso, paths, scratch, info, label, args, root, changed):
     primary = info["squashfs"]
     # archiso and miso compare these against the image at boot when `checksum=y`.
     # A stale one powers the machine off (Garuda sets checksum=y by default).
-    for suffix, kind in ((".sha512", "sha512"), (".md5", "md5")):
-        sum_path = _sibling(paths, primary, suffix)
-        if sum_path:
-            host = work / Path(sum_path).name
-            host.write_text(format_checksum(_hash_file(built, kind), Path(primary).name))
-            iso_to_host[sum_path] = host
+    for changed_path, changed_file in changed.items():
+        for suffix, kind in ((".sha512", "sha512"), (".md5", "md5")):
+            sum_path = _sibling(paths, changed_path, suffix)
+            if sum_path:
+                host = work / Path(sum_path).name
+                host.write_text(format_checksum(_hash_file(changed_file, kind), Path(changed_path).name))
+                iso_to_host[sum_path] = host
     size_path = _sibling(paths, primary, ".size")
     if size_path:
         # filesystem.size is the unpacked byte size casper shows while copying.

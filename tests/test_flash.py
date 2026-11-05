@@ -2,6 +2,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -379,6 +380,16 @@ class WriteGuardTest(unittest.TestCase):
         self.assertEqual(proc.wait(timeout=20), 143)
         with self.assertRaises(ProcessLookupError):
             os.kill(child, 0)
+
+    def test_cancel_gives_up_on_a_child_that_ignores_sigterm(self):
+        code = ("import subprocess, time; from tuxutil import flash; flash.STOP_WAIT = 0.3; flash.cancel_on_stdin_eof();"
+                "subprocess.Popen(['sh', '-c', 'trap \"\" TERM; echo up; exec sleep 60']); time.sleep(60)")
+        proc = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(os.killpg, proc.pid, signal.SIGKILL)
+        self.assertEqual(proc.stdout.readline().strip(), "up")
+        proc.stdin.close()
+        self.assertEqual(proc.wait(timeout=20), 143)
 
     def test_closed_stdin_cannot_stop_a_flash_unless_asked(self):
         proc, target = self.run_real_writer(subprocess.DEVNULL)

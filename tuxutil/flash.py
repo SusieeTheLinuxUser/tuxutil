@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -899,6 +900,10 @@ def cmd_write(args):
     return 0
 
 
+# Seconds a cancel waits for child tools to exit.
+STOP_WAIT = 10
+
+
 def cancel_on_stdin_eof():
     """Stop this process and its children when stdin closes. The GUI cancels this way, as it can't signal a process running as root."""
     # Its own group, so the kill below can't reach the GUI. A session leader already has one, and setpgrp would fail.
@@ -911,9 +916,13 @@ def cancel_on_stdin_eof():
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         os.killpg(0, signal.SIGTERM)
         # They must be gone before the scratch folder is removed.
-        while True:
+        # ponytail: a child that outlives the wait keeps running and can leave scratch behind. SIGKILL
+        # to the group would take this process too, so it would need its own child list, and a stuck stick ignores SIGKILL anyway.
+        deadline = time.monotonic() + STOP_WAIT
+        while time.monotonic() < deadline:
             try:
-                os.waitpid(-1, 0)
+                if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                    time.sleep(0.05)
             except ChildProcessError:
                 break
         sys.exit(143)

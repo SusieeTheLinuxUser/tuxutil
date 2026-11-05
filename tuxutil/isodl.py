@@ -151,7 +151,12 @@ def _latest(entry):
         elif "index_url" in entry:
             # A newest folder can exist before its ISO does, so an empty list falls through to older ones.
             for folder in _index_folders(entry):
-                found = _from_sums(f"{entry['index_url']}{folder}/{entry['sums']}", entry["pattern"])
+                try:
+                    found = _from_sums(f"{entry['index_url']}{folder}/{entry['sums']}", entry["pattern"])
+                except urllib.error.HTTPError as err:
+                    if err.code != 404:
+                        raise
+                    continue
                 if found:
                     url = f"{entry['index_url']}{folder}/{found[0]}"
                     break

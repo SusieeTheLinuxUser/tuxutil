@@ -10,6 +10,7 @@ import socket
 import tempfile
 import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -155,6 +156,18 @@ class IsoDownloadTests(unittest.TestCase):
             '<a href="23/"></a><a href="22.3/"></a><a href="22.2/"></a>', matches)
         self.assertEqual(result[0], "https://x.test/22.3/d-22.3.iso")
         self.assertEqual(calls, ["https://x.test/23/SUMS", "https://x.test/22.3/SUMS"])
+
+    def test_index_skips_a_folder_whose_checksum_file_is_not_up_yet(self):
+        def lookup(checksum_url, pattern):
+            if "/23/" in checksum_url:
+                raise urllib.error.HTTPError(checksum_url, 404, "Not Found", None, None)
+            return "d-22.iso", "e" * 64
+
+        entry = {"id": "d", "name": "D", "direct": True, "page": "p",
+                 "index_url": "https://x.test/", "sums": "SUMS", "pattern": r"d-\d+\.iso"}
+        with patch.object(isodl, "_read", return_value='<a href="23/"></a><a href="22/"></a>'), \
+                patch.object(isodl, "_from_sums", side_effect=lookup):
+            self.assertEqual(isodl._latest(entry)[0], "https://x.test/22/d-22.iso")
 
     def test_index_tries_at_most_three_folders_before_giving_up(self):
         calls = []

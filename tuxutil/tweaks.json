@@ -732,7 +732,7 @@
       [
         "sh",
         "-c",
-        "set -eu\nconf=/etc/sysctl.d/99-tuxutil-bbr.conf\nif [ ! -f \"$conf.qdisc.prev\" ]; then sysctl -n net.core.default_qdisc > \"$conf.qdisc.prev\"; fi\nif [ ! -f \"$conf.cc.prev\" ]; then sysctl -n net.ipv4.tcp_congestion_control > \"$conf.cc.prev\"; fi\nprintf '%s\\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' > \"$conf\"\nsysctl -w net.core.default_qdisc=fq\nsysctl -w net.ipv4.tcp_congestion_control=bbr\n"
+        "set -eu\nconf=/etc/sysctl.d/99-tuxutil-bbr.conf\nqdisc=$(sysctl -n net.core.default_qdisc)\ncc=$(sysctl -n net.ipv4.tcp_congestion_control)\n# First, as some kernels ship without the BBR module, and nothing may change then.\nif ! sysctl -w net.ipv4.tcp_congestion_control=bbr; then\n    echo 'This kernel has no BBR module, so nothing was changed.' >&2\n    exit 1\nfi\nif [ ! -f \"$conf.qdisc.prev\" ]; then printf '%s\\n' \"$qdisc\" > \"$conf.qdisc.prev\"; fi\nif [ ! -f \"$conf.cc.prev\" ]; then printf '%s\\n' \"$cc\" > \"$conf.cc.prev\"; fi\nprintf '%s\\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' > \"$conf\"\nsysctl -w net.core.default_qdisc=fq\n"
       ]
     ],
     "undo": [

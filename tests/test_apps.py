@@ -119,7 +119,7 @@ class DryRunTest(unittest.TestCase):
     def test_native_package_per_family(self):
         expected = {
             "arch": ["pacman", "-S", "--needed", "--noconfirm", "firefox"],
-            "debian": ["apt-get", "install", "-y", "firefox-esr"],
+            "debian": ["sh", "-c", "sh -c 'apt-get update || true' && apt-get install -y firefox-esr"],
             "fedora": ["dnf", "install", "-y", "firefox"],
             "suse": ["zypper", "-n", "install", "MozillaFirefox"],
         }
@@ -144,7 +144,7 @@ class DryRunTest(unittest.TestCase):
         with as_family("debian"):
             rc, out, _ = invoke(["--dry-run", "apps", "install", "git", "git"])
         self.assertEqual(rc, 0)
-        self.assertEqual(commands(out), [["apt-get", "install", "-y", "git"]])
+        self.assertEqual(commands(out), [["sh", "-c", "sh -c 'apt-get update || true' && apt-get install -y git"]])
 
     def test_native_and_flatpak_are_two_commands(self):
         with as_family("arch"):

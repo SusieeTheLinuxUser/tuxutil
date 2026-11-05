@@ -18,6 +18,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -483,7 +485,7 @@ def prepare_for_write(iso, device, confirm):
     return prepare(iso, device, confirm)
 
 
-def root_argv(iso, device, confirm, no_verify=False):
+def root_argv(iso, device, confirm, no_verify=False, cancel_on_eof=False):
     """Argv of the root-side writer.
 
     The test-file switch is intentionally not passed: the root process must not enter it.
@@ -493,6 +495,8 @@ def root_argv(iso, device, confirm, no_verify=False):
     argv = [*system.self_cmd(), "flash", "_write", str(Path(iso).resolve()), device, "--confirm", confirm]
     if no_verify:
         argv.append("--no-verify")
+    if cancel_on_eof:
+        argv.append("--cancel-on-eof")
     return argv
 
 
@@ -892,8 +896,49 @@ def cmd_write(args):
         return cmd_write_root(args)
     # Fail closed before the root prompt when the target is obviously wrong.
     prepare(args.iso, args.device, args.confirm)
-    system.run(system.as_root(root_argv(args.iso, args.device, args.confirm, args.no_verify)))
+    system.run(system.as_root(root_argv(args.iso, args.device, args.confirm, args.no_verify, args.cancel_on_eof)))
     return 0
+
+
+# Seconds a cancel waits for child tools to exit.
+STOP_WAIT = 10
+
+
+def cancel_on_stdin_eof():
+    """Stop this process and its children when stdin closes. The GUI cancels this way, as it can't signal a process running as root."""
+    # Its own group, so the kill below can't reach the GUI. A session leader already has one, and setpgrp would fail.
+    if os.getpgrp() != os.getpid():
+        os.setpgrp()
+
+    def stop(*_):
+        # A cancel can land while subprocess is still starting a child. Popen then raises and never kills it,
+        # so 7z would go on filling the scratch folder. Signals run between bytecodes, so a child started before this is in the group.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        os.killpg(0, signal.SIGTERM)
+        # They must be gone before the scratch folder is removed.
+        # ponytail: a child that outlives the wait keeps running and can leave scratch behind. SIGKILL
+        # to the group would take this process too, so it would need its own child list, and a stuck stick ignores SIGKILL anyway.
+        deadline = time.monotonic() + STOP_WAIT
+        while time.monotonic() < deadline:
+            try:
+                if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                    time.sleep(0.05)
+            except ChildProcessError:
+                break
+        sys.exit(143)
+
+    signal.signal(signal.SIGTERM, stop)
+
+    def watch():
+        try:
+            while os.read(0, 4096):
+                pass
+        except OSError:
+            pass
+        print("flash: cancelled; flash the stick again before using it.", flush=True)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=watch, daemon=True).start()
 
 
 def cmd_write_root(args):
@@ -903,6 +948,9 @@ def cmd_write_root(args):
         return 0
     # Turn SIGTERM into an exception so the scratch extract is cleaned up.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    # Opt-in only: stdin is /dev/null under cron or a script, and that must not abort the flash.
+    if args.cancel_on_eof:
+        cancel_on_stdin_eof()
     try:
         mode, _files = detect_mode(plan["iso"])
         if mode == "windows":
@@ -931,6 +979,7 @@ def register(sub):
     write.add_argument("device")
     write.add_argument("--confirm", required=True, help="must exactly equal DEVICE")
     write.add_argument("--no-verify", action="store_true", help="skip the read-back check")
+    write.add_argument("--cancel-on-eof", action="store_true", help=argparse.SUPPRESS)
     write.set_defaults(func=cmd_write)
 
     internal = commands.add_parser("_write", help=argparse.SUPPRESS)
@@ -938,4 +987,5 @@ def register(sub):
     internal.add_argument("device")
     internal.add_argument("--confirm", required=True)
     internal.add_argument("--no-verify", action="store_true")
+    internal.add_argument("--cancel-on-eof", action="store_true")
     internal.set_defaults(func=cmd_write_root)

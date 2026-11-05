@@ -222,6 +222,17 @@ class TestTuxUtilGui(unittest.TestCase):
         job.assert_not_called()
         warn.assert_called_once()
 
+    def test_a_caught_iso_keeps_the_page_open_while_another_job_runs(self):
+        tab = self.win.tab_winiso
+        dialog, item = MagicMock(), MagicMock()
+        item.url.return_value = gui.QUrl("https://dl.example.test/Win11.iso")
+        with patch.object(self.win, "active_process", MagicMock()), patch.object(self.win, "run_cli_job") as job, \
+                patch.object(gui.QMessageBox, "warning") as warn:
+            tab.catch_download(item, "Windows 11", dialog)
+        job.assert_not_called()
+        dialog.close.assert_not_called()
+        warn.assert_called_once()
+
     def test_pasted_link_goes_to_the_cli_and_junk_does_not(self):
         tab = self.win.tab_linuxiso
         with patch.object(self.win, "run_cli_job") as job, patch.object(gui.QMessageBox, "warning") as warn:
@@ -578,15 +589,29 @@ class ProcessFailureTest(unittest.TestCase):
             proc.kill()
             self.assertTrue(wait_until(lambda: self.win.active_process is None))
 
-    def test_flash_cannot_be_cancelled(self):
+    def test_flash_cancel_closes_stdin_and_never_signals(self):
+        # This fake writer exits only on stdin EOF, and ignores SIGTERM as a root process effectively does.
+        code = "import signal,sys; signal.signal(signal.SIGTERM, signal.SIG_IGN); sys.stdin.read(); sys.exit(143)"
         with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}):
-            self.win.run_cli_job(["pass"], "Flash", is_flash=True)
-            self.assertFalse(self.win.btn_cancel_job.isEnabled())
-            self.assertIn("Cancel is off", self.win.log_text.toPlainText())
-            self.assertTrue(wait_until(lambda: self.win.active_process is None))
-            self.win.run_cli_job(["pass"], "Other")
+            self.win.run_cli_job([code], "Flash", is_flash=True)
+            proc = self.win.active_process
+            self.assertTrue(proc.waitForStarted(5000))
             self.assertTrue(self.win.btn_cancel_job.isEnabled())
+            with patch.object(proc, "terminate") as terminate, patch.object(proc, "kill") as kill:
+                self.win.on_cancel_active_job()
+                self.assertFalse(self.win.btn_cancel_job.isEnabled())
+                self.assertTrue(wait_until(lambda: self.win.active_process is None))
+            terminate.assert_not_called()
+            kill.assert_not_called()
+        self.assertEqual(self.win.lbl_job_status.text(), "Flash cancelled")
+
+    def test_flash_that_finishes_despite_cancel_reports_success(self):
+        with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}):
+            self.win.run_cli_job(["import sys; sys.stdin.read()"], "Flash", is_flash=True)
+            self.assertTrue(self.win.active_process.waitForStarted(5000))
+            self.win.on_cancel_active_job()
             self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        self.assertIn("completed successfully", self.win.lbl_job_status.text())
 
     def test_window_stays_open_during_a_flash(self):
         with patch.dict(os.environ, {"TUXUTIL_CLI": f"{sys.executable} -c"}), \

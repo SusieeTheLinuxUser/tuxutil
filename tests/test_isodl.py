@@ -10,6 +10,7 @@ import socket
 import tempfile
 import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,6 +70,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class IsoDownloadTests(unittest.TestCase):
+    def test_checksum_list_gives_the_newest_whatever_the_file_order(self):
+        names = ["Zorin-OS-18-Core-64-bit-r3.iso", "Zorin-OS-18-Core-64-bit.iso", "Zorin-OS-18.1-Core-64-bit-r1.iso",
+                 "Zorin-OS-18.1-Core-64-bit.iso", "Zorin-OS-18.1-Lite-64-bit.iso"]
+        lines = [f"{i:064x}  {name}\n".encode() for i, name in enumerate(names)]
+        pattern = r"Zorin-OS-\d+(\.\d+)?-Core-64-bit(-r\d+)?\.iso"
+        with patch.object(isodl, "_request") as request:
+            request.return_value.__enter__.return_value = lines
+            self.assertEqual(isodl._from_sums("https://x.test/sums", pattern), (names[2], f"{2:064x}"))
+
     @classmethod
     def setUpClass(cls):
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -128,6 +138,86 @@ class IsoDownloadTests(unittest.TestCase):
         with patch.object(Handler, "sums", body.encode(), create=True):
             return isodl._latest({"id": "d", "name": "D", "direct": True, "page": self.base + "/SUMS", **entry})
 
+    def latest_with_index(self, entry, listing, matches):
+        """Run _latest on an index entry with this listing; _from_sums answers per checksum URL."""
+        calls = []
+
+        def lookup(checksum_url, pattern):
+            calls.append(checksum_url)
+            return matches.get(checksum_url)
+
+        with patch.object(isodl, "_read", return_value=listing), patch.object(isodl, "_from_sums", side_effect=lookup):
+            return isodl._latest({"id": "d", "name": "D", "direct": True, "page": "p", **entry}), calls
+
+    def test_index_picks_the_newest_folder_numerically(self):
+        """10 beats 9 numerically, where a string sort would say 9."""
+        matches = {"https://x.test/10/SUMS": ("d-10.iso", "a" * 64)}
+        result, calls = self.latest_with_index(
+            {"index_url": "https://x.test/", "sums": "SUMS", "pattern": r"d-\d+\.iso"},
+            '<a href="10/"></a><a href="9/"></a>', matches)
+        self.assertEqual(result, ("https://x.test/10/d-10.iso", "d-10.iso", "a" * 64))
+        self.assertEqual(calls, ["https://x.test/10/SUMS"])
+
+    def test_index_skips_folders_without_a_matching_iso(self):
+        matches = {"https://x.test/23/SUMS": None, "https://x.test/22.3/SUMS": ("d-22.3.iso", "b" * 64)}
+        result, calls = self.latest_with_index(
+            {"index_url": "https://x.test/", "sums": "SUMS", "pattern": r"d-[\d.]+\.iso"},
+            '<a href="23/"></a><a href="22.3/"></a><a href="22.2/"></a>', matches)
+        self.assertEqual(result[0], "https://x.test/22.3/d-22.3.iso")
+        self.assertEqual(calls, ["https://x.test/23/SUMS", "https://x.test/22.3/SUMS"])
+
+    def test_index_skips_a_folder_whose_checksum_file_is_not_up_yet(self):
+        def lookup(checksum_url, pattern):
+            if "/23/" in checksum_url:
+                raise urllib.error.HTTPError(checksum_url, 404, "Not Found", None, None)
+            return "d-22.iso", "e" * 64
+
+        entry = {"id": "d", "name": "D", "direct": True, "page": "p",
+                 "index_url": "https://x.test/", "sums": "SUMS", "pattern": r"d-\d+\.iso"}
+        with patch.object(isodl, "_read", return_value='<a href="23/"></a><a href="22/"></a>'), \
+                patch.object(isodl, "_from_sums", side_effect=lookup):
+            self.assertEqual(isodl._latest(entry)[0], "https://x.test/22/d-22.iso")
+
+    def test_index_tries_at_most_three_folders_before_giving_up(self):
+        calls = []
+
+        def lookup(checksum_url, pattern):
+            calls.append(checksum_url)
+            return None
+
+        listing = '<a href="4/"></a><a href="3/"></a><a href="2/"></a><a href="1/"></a>'
+        entry = {"id": "d", "name": "D", "direct": True, "page": "p",
+                 "index_url": "https://x.test/", "sums": "SUMS", "pattern": r"x\.iso"}
+        with patch.object(isodl, "_read", return_value=listing), \
+                patch.object(isodl, "_from_sums", side_effect=lookup), \
+                self.assertRaisesRegex(ValueError, "no longer lists"):
+            isodl._latest(entry)
+        self.assertEqual(calls, [f"https://x.test/{v}/SUMS" for v in (4, 3, 2)])
+
+    def test_ubuntu_index_keeps_to_lts_folders(self):
+        """Only even-year .04 folders count, so a newer interim release is skipped."""
+        matches = {"https://x.test/26.04.1/SUMS": ("ubuntu-26.04.1-desktop-amd64.iso", "c" * 64)}
+        listing = '<a href="26.04.1/"></a><a href="26.04/"></a><a href="26.10/"></a><a href="25.10/"></a>'
+        result, calls = self.latest_with_index(
+            {"index_url": "https://x.test/", "sums": "SUMS", "lts": True,
+             "pattern": r"ubuntu-\d+\.04[.\d]*-desktop-amd64\.iso"}, listing, matches)
+        self.assertEqual(result[0], "https://x.test/26.04.1/ubuntu-26.04.1-desktop-amd64.iso")
+        self.assertEqual(calls, ["https://x.test/26.04.1/SUMS"])
+
+    def test_ubuntu_index_without_any_lts_folder_raises(self):
+        listing = '<a href="26.10/"></a><a href="25.10/"></a>'
+        with self.assertRaisesRegex(ValueError, "no longer lists"):
+            self.latest_with_index({"index_url": "https://x.test/", "sums": "SUMS", "lts": True,
+                                    "pattern": r"ubuntu-\d+\.04[.\d]*-desktop-amd64\.iso"}, listing, {})
+
+    def test_index_listing_skips_non_version_folders(self):
+        matches = {"https://x.test/18/SUMS": ("d-18.iso", "d" * 64)}
+        listing = '<a href="../"></a><a href="18/"></a><a href="public/"></a><a href="sha256sum.txt"></a>'
+        result, calls = self.latest_with_index(
+            {"index_url": "https://x.test/", "sums": "SUMS", "pattern": r"d-\d+\.iso"}, listing, matches)
+        self.assertEqual(calls, ["https://x.test/18/SUMS"])
+        self.assertEqual(result[0], "https://x.test/18/d-18.iso")
+
     def test_fedora_style_list_picks_the_newest_stable_x86_iso(self):
         good, old, beta = "a" * 64, "b" * 64, "c" * 64
         rows = [{"version": "9", "arch": "x86_64", "variant": "KDE", "link": "https://x.test/old.iso", "sha256": old},
@@ -167,7 +257,7 @@ class IsoDownloadTests(unittest.TestCase):
 
     def test_every_direct_entry_can_be_resolved(self):
         for entry in isodl.CATALOG:
-            self.assertEqual(entry["direct"], bool({"checksum_url", "releases_url", "build_url", "page_regex"} & set(entry)), entry["id"])
+            self.assertEqual(entry["direct"], bool({"checksum_url", "releases_url", "build_url", "page_regex", "index_url"} & set(entry)), entry["id"])
             self.assertTrue(entry["page"].startswith("https://"), entry["id"])
 
     def test_checksum_mismatch_deletes_partial(self):

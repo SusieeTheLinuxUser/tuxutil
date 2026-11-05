@@ -207,8 +207,8 @@ if HAS_PYSIDE6:
     _icon_dir = None
 
     def apply_theme(app):
-        """Pick dark or light from the desktop, then draw everything ourselves so every desktop theme looks the same."""
-        C.update(THEMES["dark" if app.palette().window().color().lightness() < 128 else "light"])
+        """Dark unless TUXUTIL_THEME=light, drawn by us so every desktop theme looks the same."""
+        C.update(THEMES["light" if os.environ.get("TUXUTIL_THEME") == "light" else "dark"])
         app.setStyle("Fusion")
         pal = QPalette()
         for role, key in (

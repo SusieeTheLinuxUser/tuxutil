@@ -43,8 +43,11 @@ try:
         QWidget,
     )
     HAS_PYSIDE6 = True
-except ImportError:
+    PYSIDE6_ERROR = ""
+except ImportError as err:
     HAS_PYSIDE6 = False
+    # An installed PySide6 fails this way too, when a system library like libGL is missing.
+    PYSIDE6_ERROR = str(err)
 
 
 def get_cli_base_cmd():
@@ -1760,8 +1763,9 @@ def cmd_gui(args=None):
     """Launch the GUI desktop application."""
     if not HAS_PYSIDE6:
         print(
-            "PySide6 is required to run the TuxUtil GUI.\n"
-            "Install it with: pip install PySide6 (or via your system package manager)",
+            f"The TuxUtil GUI could not load PySide6: {PYSIDE6_ERROR}\n"
+            "If that names a missing library, install it with your system package manager.\n"
+            "Otherwise install PySide6: pip install PySide6 (or via your system package manager)",
             file=sys.stderr,
         )
         return 1

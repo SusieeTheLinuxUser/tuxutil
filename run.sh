@@ -100,7 +100,9 @@ run_app() {
                 printf '%s\n' 'TuxUtil: GUI dependency installation failed; the CLI still works.' >&2
                 return 1
             fi
-            # Only the Windows 11 download window needs this. Without it, that page opens in the browser.
+        fi
+        # Only the Windows 11 download window needs this. Without it, that page opens in the browser.
+        if ! "$venv_python" -c 'import importlib.util as u; raise SystemExit(u.find_spec("PySide6.QtWebEngineWidgets") is None)' >/dev/null 2>&1; then
             "$venv_python" -m pip install PySide6-WebEngine ||
                 printf '%s\n' 'TuxUtil: the in-app download window could not be installed; Microsoft'"'"'s page will open in your browser.' >&2
         fi

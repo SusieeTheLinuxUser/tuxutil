@@ -39,6 +39,8 @@ Start on **Doctor**. It shows your distro and which tools are missing, and **Ins
 
 The installed marks and the drive in these shots are samples.
 
+The app is dark by default. Set `TUXUTIL_THEME=light` for the light theme.
+
 - **Apps:** about 100 of them, through your package manager or Flatpak. Tick what you want, then press **Install Selected** or **Remove Selected**.
 - **Tweaks:** about 30 small system changes, each with a risk level. Press **Apply Selected**, and **Undo Selected** reverses them.
 - **Updates:** **Run Update** updates the system.

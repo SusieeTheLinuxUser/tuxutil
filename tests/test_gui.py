@@ -683,5 +683,19 @@ class DryRunTest(unittest.TestCase):
             self.assertNotIn("--dry-run", gui.get_cli_base_cmd())
 
 
+@unittest.skipUnless(HAS_PYSIDE6, "PySide6 not installed")
+class ThemeTests(unittest.TestCase):
+    def test_dark_unless_asked_for_light(self):
+        app = get_qapp()
+        self.addCleanup(gui.apply_theme, app)
+        with patch.dict(os.environ):
+            os.environ.pop("TUXUTIL_THEME", None)
+            gui.apply_theme(app)
+            self.assertEqual(gui.C["bg"], gui.THEMES["dark"]["bg"])
+            os.environ["TUXUTIL_THEME"] = "light"
+            gui.apply_theme(app)
+            self.assertEqual(gui.C["bg"], gui.THEMES["light"]["bg"])
+
+
 if __name__ == "__main__":
     unittest.main()

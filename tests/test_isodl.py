@@ -70,6 +70,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class IsoDownloadTests(unittest.TestCase):
+    def test_checksum_list_gives_the_newest_whatever_the_file_order(self):
+        names = ["Zorin-OS-18-Core-64-bit-r3.iso", "Zorin-OS-18-Core-64-bit.iso", "Zorin-OS-18.1-Core-64-bit-r1.iso",
+                 "Zorin-OS-18.1-Core-64-bit.iso", "Zorin-OS-18.1-Lite-64-bit.iso"]
+        lines = [f"{i:064x}  {name}\n".encode() for i, name in enumerate(names)]
+        pattern = r"Zorin-OS-\d+(\.\d+)?-Core-64-bit(-r\d+)?\.iso"
+        with patch.object(isodl, "_request") as request:
+            request.return_value.__enter__.return_value = lines
+            self.assertEqual(isodl._from_sums("https://x.test/sums", pattern), (names[2], f"{2:064x}"))
+
     @classmethod
     def setUpClass(cls):
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)

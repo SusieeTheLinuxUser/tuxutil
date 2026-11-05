@@ -100,15 +100,23 @@ def _read(url):
 
 
 def _from_sums(checksum_url, pattern):
-    """Return (file name, SHA-256) of the last file a checksum list names that fits the pattern, or None."""
+    """Return (file name, SHA-256) of the newest file a checksum list names that fits the pattern, or None."""
     found = None
+    newest = None
     with _request(checksum_url) as response:
         for line in response:
             match = re.fullmatch(rb"([0-9a-fA-F]{64})\s+\*?(.+?)\s*", line)
             if match:
                 name = match.group(2).decode("utf-8", "replace").rsplit("/", 1)[-1]
                 if re.fullmatch(pattern, name):
-                    found = name, match.group(1).decode("ascii").lower()
+                    # Not file order: Zorin lists -r3, -r2, -r1, then the first build of the same version.
+                    version = re.search(r"\d+(?:\.\d+)*", name)
+                    revision = re.search(r"-r(\d+)\.iso$", name)
+                    rank = ([int(part) for part in version.group(0).split(".")] if version else [],
+                            int(revision.group(1)) if revision else 0)
+                    if newest is None or rank >= newest:
+                        newest = rank
+                        found = name, match.group(1).decode("ascii").lower()
     return found
 
 

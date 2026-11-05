@@ -64,12 +64,12 @@ class TestGuiNoPySide6(unittest.TestCase):
     """Test behavior when PySide6 is missing."""
 
     def test_pyside6_absent_fallback(self):
-        with patch.object(gui, "HAS_PYSIDE6", False):
+        with patch.object(gui, "HAS_PYSIDE6", False), patch.object(gui, "PYSIDE6_ERROR", "libGL.so.1: cannot open"):
             stderr_capture = io.StringIO()
             with patch("sys.stderr", stderr_capture):
                 exit_code = gui.cmd_gui()
             self.assertEqual(exit_code, 1)
-            self.assertIn("PySide6 is required", stderr_capture.getvalue())
+            self.assertIn("libGL.so.1: cannot open", stderr_capture.getvalue())
             self.assertIn("pip install PySide6", stderr_capture.getvalue())
 
     def test_mask_command_for_log(self):

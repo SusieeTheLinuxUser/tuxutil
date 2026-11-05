@@ -125,7 +125,7 @@ tuxutil flash list --json
 tuxutil flash write custom.iso /dev/sdX --confirm /dev/sdX
 ```
 
-- Other processes can read command-line flags while a build runs, so on a shared machine set the `TUXUTIL_PASSWORD` environment variable instead of passing `--password`. The GUI already does this.
+- Other processes can read command-line flags while a build runs, so on a shared machine set the `TUXUTIL_PASSWORD` environment variable instead of passing `--password`. The GUI already does this. It keeps the password off the command line, but it doesn't hide it from anything that can read your environment.
 - A pasted download link can't be checked unless you pass `--sha256`, so without it TuxUtil prints the file's hash for you to compare.
 - `flash write` verifies the copy unless you pass `--no-verify`.
 

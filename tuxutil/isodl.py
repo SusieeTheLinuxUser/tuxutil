@@ -28,28 +28,31 @@ CATALOG = [
     {"id": "cachyos", "name": "CachyOS Desktop", "kind": "linux", "direct": True,
      "page": "https://cachyos.org/download/", "notes": "Newest build named on CachyOS's download page; checksum verified from its own file.",
      "page_regex": r"https://iso\.cachyos\.org/desktop/\d+/cachyos-desktop-linux-\d+\.iso"},
-    # ponytail: Mint's, Ubuntu's, Pop's and Zorin's version numbers are hard-coded and go stale. Update them on a new release.
-    {"id": "mint", "name": "Linux Mint 22.3 Cinnamon", "kind": "linux", "direct": True,
-     "page": "https://linuxmint.com/download.php", "notes": "Checksum verified from the official mirror.",
-     "checksum_url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt",
-     "pattern": r"linuxmint-22\.3-cinnamon-64bit\.iso"},
-    {"id": "ubuntu", "name": "Ubuntu 26.04 LTS Desktop", "kind": "linux", "direct": True,
-     "page": "https://ubuntu.com/download/desktop", "notes": "Newest 26.04 point release; checksum verified from Ubuntu's own list.",
-     "checksum_url": "https://releases.ubuntu.com/26.04/SHA256SUMS",
-     "pattern": r"ubuntu-26\.04[.\d]*-desktop-amd64\.iso"},
+    {"id": "mint", "name": "Linux Mint Cinnamon", "kind": "linux", "direct": True,
+     "page": "https://linuxmint.com/download.php", "notes": "Newest release from the official mirror; checksum verified from its own list.",
+     "index_url": "https://mirrors.edge.kernel.org/linuxmint/stable/",
+     "sums": "sha256sum.txt",
+     "pattern": r"linuxmint-\d+(\.\d+)?-cinnamon-64bit\.iso"},
+    {"id": "ubuntu", "name": "Ubuntu LTS Desktop", "kind": "linux", "direct": True,
+     "page": "https://ubuntu.com/download/desktop", "notes": "Newest LTS release; checksum verified from Ubuntu's own list.",
+     "index_url": "https://releases.ubuntu.com/", "lts": True,
+     "sums": "SHA256SUMS",
+     "pattern": r"ubuntu-\d+\.04[.\d]*-desktop-amd64\.iso"},
     {"id": "fedora-kde", "name": "Fedora KDE Plasma Desktop", "kind": "linux", "direct": True,
      "page": "https://fedoraproject.org/kde/", "notes": "Newest stable release; checksum verified from Fedora's release list.",
      "releases_url": "https://fedoraproject.org/releases.json", "variant": "KDE"},
     {"id": "pop-os", "name": "Pop!_OS 24.04 (Intel/AMD)", "kind": "linux", "direct": True,
      "page": "https://system76.com/pop/download/", "notes": "Newest build; checksum verified from System76's build list.",
      "build_url": "https://api.pop-os.org/builds/24.04/intel"},
+    # ponytail: Pop's version stays hard-coded (its API answers only known versions and has no listing); update it on a new release.
     {"id": "pop-os-nvidia", "name": "Pop!_OS 24.04 (NVIDIA)", "kind": "linux", "direct": True,
      "page": "https://system76.com/pop/download/", "notes": "Newest build; checksum verified from System76's build list.",
      "build_url": "https://api.pop-os.org/builds/24.04/nvidia"},
-    {"id": "zorin", "name": "Zorin OS 18 Core", "kind": "linux", "direct": True,
-     "page": "https://zorin.com/os/download/", "notes": "Checksum verified from the official mirror's list.",
-     "checksum_url": "https://mirrors.edge.kernel.org/zorinos-isos/18/SHA256SUMS.txt",
-     "pattern": r"Zorin-OS-18(\.\d+)?-Core-64-bit(-r\d+)?\.iso"},
+    {"id": "zorin", "name": "Zorin OS Core", "kind": "linux", "direct": True,
+     "page": "https://zorin.com/os/download/", "notes": "Newest release from the official mirror's list.",
+     "index_url": "https://mirrors.edge.kernel.org/zorinos-isos/",
+     "sums": "SHA256SUMS.txt",
+     "pattern": r"Zorin-OS-\d+(\.\d+)?-Core-64-bit(-r\d+)?\.iso"},
     {"id": "manjaro", "name": "Manjaro KDE Plasma", "kind": "linux", "direct": True,
      "page": "https://manjaro.org/products/download/x86", "notes": "Newest build named on Manjaro's download page; checksum verified from its own file.",
      "page_regex": r"https://download\.manjaro\.org/kde/[\d.]+/manjaro-kde-[\w.-]+\.iso"},
@@ -109,6 +112,20 @@ def _from_sums(checksum_url, pattern):
     return found
 
 
+def _index_folders(entry):
+    """The entry's version folders from its directory listing, newest first, at most three."""
+    folders = []
+    for name in re.findall(r'href="([^"?/]+)/"', _read(entry["index_url"])):
+        parts = name.split(".")
+        if not all(part.isdigit() for part in parts):
+            continue
+        if entry.get("lts") and (int(parts[0]) % 2 or parts[1:2] != ["04"]):
+            continue
+        folders.append((tuple(int(part) for part in parts), name))
+    folders.sort(reverse=True)
+    return [name for _, name in folders[:3]]
+
+
 def _latest(entry):
     """Return (url, file name, SHA-256) of the entry's newest ISO, as its official site lists it."""
     url = entry.get("url")
@@ -131,6 +148,18 @@ def _latest(entry):
             if match:
                 url = match.group(0)
                 found = _from_sums(url + ".sha256", re.escape(url.rsplit("/", 1)[-1]))
+        elif "index_url" in entry:
+            # A newest folder can exist before its ISO does, so an empty list falls through to older ones.
+            for folder in _index_folders(entry):
+                try:
+                    found = _from_sums(f"{entry['index_url']}{folder}/{entry['sums']}", entry["pattern"])
+                except urllib.error.HTTPError as err:
+                    if err.code != 404:
+                        raise
+                    continue
+                if found:
+                    url = f"{entry['index_url']}{folder}/{found[0]}"
+                    break
         else:
             found = _from_sums(entry["checksum_url"], entry["pattern"])
     except (AttributeError, KeyError, TypeError, json.JSONDecodeError):

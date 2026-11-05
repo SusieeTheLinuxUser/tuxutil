@@ -922,6 +922,10 @@ if HAS_PYSIDE6:
             if not url.path().lower().endswith(".iso"):
                 QMessageBox.warning(dialog, "Not an ISO", "That download isn't an ISO file, so TuxUtil ignored it.")
                 return
+            # Keep the page open: Microsoft's button still works once the running job is done.
+            if self.main_win.active_process is not None:
+                QMessageBox.warning(dialog, "Job In Progress", "Another job is running. When it finishes, press the download button on this page again.")
+                return
             dialog.close()
             # The vendor's link is signed, and other local users can read process arguments.
             self.start_download(["iso", "download"], f"Downloading {name}", {"TUXUTIL_DOWNLOAD_URL": url.toString(QUrl.FullyEncoded)})

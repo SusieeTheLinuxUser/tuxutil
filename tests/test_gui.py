@@ -222,6 +222,17 @@ class TestTuxUtilGui(unittest.TestCase):
         job.assert_not_called()
         warn.assert_called_once()
 
+    def test_a_caught_iso_keeps_the_page_open_while_another_job_runs(self):
+        tab = self.win.tab_winiso
+        dialog, item = MagicMock(), MagicMock()
+        item.url.return_value = gui.QUrl("https://dl.example.test/Win11.iso")
+        with patch.object(self.win, "active_process", MagicMock()), patch.object(self.win, "run_cli_job") as job, \
+                patch.object(gui.QMessageBox, "warning") as warn:
+            tab.catch_download(item, "Windows 11", dialog)
+        job.assert_not_called()
+        dialog.close.assert_not_called()
+        warn.assert_called_once()
+
     def test_pasted_link_goes_to_the_cli_and_junk_does_not(self):
         tab = self.win.tab_linuxiso
         with patch.object(self.win, "run_cli_job") as job, patch.object(gui.QMessageBox, "warning") as warn:

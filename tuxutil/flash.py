@@ -936,7 +936,10 @@ def cancel_on_stdin_eof():
         except OSError:
             pass
         print("flash: cancelled; flash the stick again before using it.", flush=True)
-        os.kill(os.getpid(), signal.SIGTERM)
+        # Repeated, as one that lands just before the main thread blocks wouldn't wake it. stop ignores the rest.
+        while True:
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.2)
 
     threading.Thread(target=watch, daemon=True).start()
 

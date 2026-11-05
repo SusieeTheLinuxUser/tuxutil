@@ -2,8 +2,10 @@ import io
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -13,6 +15,8 @@ from unittest import mock
 from tuxutil import __version__
 from tuxutil import flash, system
 from tuxutil.cli import main
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def disk(name, path, size, tran, rm, children=None, model="Disk", fstype=None, mountpoints=None):
@@ -332,6 +336,67 @@ class WriteGuardTest(unittest.TestCase):
             self.assertEqual(code, 0)
             write_raw.assert_called_once()
 
+    def run_real_writer(self, stdin, *flags):
+        """Start the real CLI on a large sparse ISO and a regular file. Returns its process and the file."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        work = Path(tmp.name) / ".work"
+        work.mkdir()
+        iso, target = work / "big.iso", work / "disk.img"
+        size = 64 * 1024 * 1024
+        with open(iso, "wb") as handle:
+            handle.truncate(size - 3)
+            handle.seek(0, os.SEEK_END)
+            handle.write(b"END")
+        with open(target, "wb") as handle:
+            handle.truncate(size)
+        # 7z may be missing in CI and can't read this file anyway, so only the mode check is faked.
+        code = ("import sys; from unittest import mock; from tuxutil import flash; from tuxutil.cli import main;"
+                "mock.patch.object(flash, 'detect_mode', return_value=('raw', [])).start(); sys.exit(main(sys.argv[1:]))")
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code, "flash", "write", str(iso), str(target), "--confirm", str(target), "--no-verify", *flags],
+            stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=ROOT,
+            env={**os.environ, flash.TEST_ENV: "1"},
+        )
+        self.addCleanup(proc.stdout.close)
+        return proc, target
+
+    def test_closing_stdin_stops_the_real_writer(self):
+        proc, target = self.run_real_writer(subprocess.PIPE, "--cancel-on-eof")
+        output, _ = proc.communicate(timeout=60)  # Closes stdin.
+        self.assertEqual(proc.returncode, 143, output)
+        self.assertIn("cancelled", output)
+        self.assertFalse(target.read_bytes().endswith(b"END"))
+
+    def test_cancel_also_stops_a_child_nobody_is_waiting_for(self):
+        # What a cancel leaves behind if it lands while subprocess is still starting 7z.
+        code = ("import subprocess, time; from tuxutil import flash; flash.cancel_on_stdin_eof();"
+                "print(subprocess.Popen(['sleep', '60']).pid, flush=True); time.sleep(60)")
+        proc = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(proc.stdout.close)
+        child = int(proc.stdout.readline())
+        proc.stdin.close()
+        self.assertEqual(proc.wait(timeout=20), 143)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child, 0)
+
+    def test_cancel_gives_up_on_a_child_that_ignores_sigterm(self):
+        code = ("import subprocess, time; from tuxutil import flash; flash.STOP_WAIT = 0.3; flash.cancel_on_stdin_eof();"
+                "subprocess.Popen(['sh', '-c', 'trap \"\" TERM; echo up; exec sleep 60']); time.sleep(60)")
+        proc = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(os.killpg, proc.pid, signal.SIGKILL)
+        self.assertEqual(proc.stdout.readline().strip(), "up")
+        proc.stdin.close()
+        self.assertEqual(proc.wait(timeout=20), 143)
+
+    def test_closed_stdin_cannot_stop_a_flash_unless_asked(self):
+        proc, target = self.run_real_writer(subprocess.DEVNULL)
+        output, _ = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, output)
+        self.assertNotIn("cancelled", output)
+        self.assertTrue(target.read_bytes().endswith(b"END"))
+
     def test_raw_write_round_trip(self):
         os.environ[flash.TEST_ENV] = "1"
         with tempfile.TemporaryDirectory() as tmp:
@@ -480,7 +545,7 @@ class FatCopyTest(unittest.TestCase):
 
 
 def argparse_ns(iso, device, confirm, no_verify=False, json=False):
-    return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json)
+    return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json, cancel_on_eof=False)
 
 
 class HybridBootTest(unittest.TestCase):

@@ -98,6 +98,58 @@ class MisoTest(unittest.TestCase):
         self.assertEqual(linuxiso.patch_boot_text("timeout=10\n", timeout=2), "timeout=2\n")
 
 
+class MisoHostnameTest(unittest.TestCase):
+    """--hostname must land in the top miso layer: livefs shadows rootfs at boot."""
+
+    def test_patches_topmost_upper_layer_that_ships_etc_hostname(self):
+        upper = ["/manjaro/x86_64/desktopfs.sfs", "/manjaro/x86_64/mhwdfs.sfs",
+                 "/manjaro/x86_64/livefs.sfs"]
+        # livefs has no /etc/hostname here, so the next layer down must be picked.
+        listings = {
+            "livefs.sfs": "-rw-r--r-- 0/0 6 2026-01-01 00:00 squashfs-root/etc/hosts\n",
+            "mhwdfs.sfs": "-rw-r--r-- 0/0 8 2026-01-01 00:00 squashfs-root/etc/hostname\n",
+        }
+
+        def fake_run(cmd, **kw):
+            name = Path(cmd[2]).parent.name + ".sfs"
+            class Result:
+                stdout = listings.get(name, "")
+            return Result()
+
+        applied, unpacked = [], []
+        args = SimpleNamespace(hostname="tux", overlay=None, first_boot=None, compression="")
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("tuxutil.linuxiso.subprocess.run", fake_run), \
+                    patch.object(linuxiso, "extract_file", lambda *a, **k: None), \
+                    patch.object(linuxiso, "_unpack_squash",
+                                 lambda image, dest: unpacked.append(dest) or (None, "zstd", None)), \
+                    patch.object(linuxiso, "_apply_identity",
+                                 lambda root, a: applied.append((root, a))), \
+                    patch.object(linuxiso, "_repack", lambda *a: "new.squashfs"):
+                changed = linuxiso._patch_upper_hostname("i.iso", upper, Path(folder), args)
+        self.assertEqual(list(changed), ["/manjaro/x86_64/mhwdfs.sfs"])
+        self.assertEqual(unpacked[0].name, "root")
+        self.assertEqual(applied[0][1].hostname, "tux")
+        self.assertIsNone(applied[0][1].overlay)
+
+    def test_no_upper_layer_with_hostname_changes_nothing(self):
+        upper = ["/manjaro/x86_64/desktopfs.sfs"]
+
+        def fake_run(cmd, **kw):
+            class Result:
+                stdout = ""
+            return Result()
+
+        args = SimpleNamespace(hostname="tux", overlay=None, first_boot=None, compression="")
+        with patch("tuxutil.linuxiso.subprocess.run", fake_run), \
+                patch.object(linuxiso, "extract_file", lambda *a, **k: None), \
+                patch.object(linuxiso, "_unpack_squash", lambda image, dest: (None, "zstd", None)), \
+                patch.object(linuxiso, "_apply_identity",
+                             lambda root, a: self.fail("nothing should be patched")):
+            with tempfile.TemporaryDirectory() as folder:
+                self.assertEqual(linuxiso._patch_upper_hostname("i.iso", upper, Path(folder), args), {})
+
+
 class CmdlineTest(unittest.TestCase):
     def test_args_go_before_separator_at_start_or_middle(self):
         self.assertEqual(linuxiso._append_cmdline("--- quiet", ["a=1"]), "a=1 --- quiet")

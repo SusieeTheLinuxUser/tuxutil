@@ -95,11 +95,16 @@ run_app() {
         fi
         venv_python=$cache_base/venv/bin/python
         if ! "$venv_python" -c 'import PySide6.QtWidgets' >/dev/null 2>&1; then
-            printf '%s\n' 'TuxUtil: first GUI run: downloading PySide6-Essentials (about 85 MB, 260 MB on disk) to the cache...' >&2
+            printf '%s\n' 'TuxUtil: first GUI run: downloading PySide6 (about 260 MB, 680 MB on disk) to the cache...' >&2
             if ! "$venv_python" -m pip install PySide6-Essentials; then
                 printf '%s\n' 'TuxUtil: GUI dependency installation failed; the CLI still works.' >&2
                 return 1
             fi
+        fi
+        # Only the Windows 11 download window needs this. Without it, that page opens in the browser.
+        if ! "$venv_python" -c 'import importlib.util as u; raise SystemExit(u.find_spec("PySide6.QtWebEngineWidgets") is None)' >/dev/null 2>&1; then
+            "$venv_python" -m pip install PySide6-WebEngine ||
+                printf '%s\n' 'TuxUtil: the in-app download window could not be installed; Microsoft'"'"'s page will open in your browser.' >&2
         fi
         python_bin=$venv_python
     fi

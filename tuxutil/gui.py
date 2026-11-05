@@ -17,6 +17,7 @@ try:
         QApplication,
         QCheckBox,
         QComboBox,
+        QDialog,
         QFileDialog,
         QFormLayout,
         QFrame,
@@ -611,7 +612,7 @@ if HAS_PYSIDE6:
                     node.setText(1, risk)
                     applied = it.get("applied")
                     node.setText(2, "Yes" if applied is True else ("No" if applied is False else "Unknown"))
-                    node.setText(3, "Yes" if available else "No (Unsupported)")
+                    node.setText(3, "Yes" if available else f"No ({it.get('reason') or 'Unsupported'})")
                     node.setText(4, it.get("description", ""))
 
                     node.setToolTip(4, it.get("description", ""))
@@ -852,7 +853,7 @@ if HAS_PYSIDE6:
         def on_download_clicked(self):
             entry = self.selected_download()
             if entry and not entry.get("direct"):
-                QDesktopServices.openUrl(QUrl(entry.get("page", "")))
+                self.open_download_page(entry)
                 return
             target = entry["id"] if entry else self.download_combo.currentText().strip()
             title = f"Downloading {self.download_combo.currentText().strip()}" if entry else "Downloading ISO"
@@ -861,12 +862,73 @@ if HAS_PYSIDE6:
             if not entry and not target.startswith(("http://", "https://")):
                 QMessageBox.warning(self, "Nothing to Download", "Pick an ISO from the list, or paste a link starting with http:// or https://.")
                 return
+            self.start_download(args, title, env)
 
+        def start_download(self, args, title, env=None):
             def on_success():
                 if self.main_win.last_saved_path:
                     self.iso_path_edit.setText(self.main_win.last_saved_path)
 
             self.main_win.run_cli_job(args, title, on_finished=on_success, env=env)
+
+        def open_download_page(self, entry):
+            """Show a vendor's own page in the app, and download the ISO its button offers."""
+            page_url = QUrl(entry.get("page", ""))
+            try:
+                from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+                from PySide6.QtWebEngineWidgets import QWebEngineView
+            except ImportError:
+                # Some distros package Qt WebEngine separately. The catalog note tells the user to paste the link.
+                QDesktopServices.openUrl(page_url)
+                return
+
+            name = entry.get("name", "ISO")
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Download {name}")
+            dialog.resize(1000, 720)
+            # A profile with no name keeps no cookies or history after the window closes.
+            profile = QWebEngineProfile(dialog)
+            view = QWebEngineView(dialog)
+            page = QWebEnginePage(profile, view)
+            view.setPage(page)
+            profile.downloadRequested.connect(lambda item: self.catch_download(item, name, dialog))
+            hint = QLabel("Pick your options on this page and press its download button. TuxUtil takes the file from there.")
+            hint.setWordWrap(True)
+            btn_browser = QPushButton("Open in My Browser Instead")
+
+            def open_in_browser():
+                QDesktopServices.openUrl(page_url)
+                dialog.close()
+
+            btn_browser.clicked.connect(open_in_browser)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(hint)
+            layout.addWidget(view, 1)
+            layout.addWidget(btn_browser)
+
+            def release():
+                # The page must go before its profile, or Qt warns and can crash on exit.
+                view.setPage(None)
+                page.deleteLater()
+                dialog.deleteLater()
+
+            dialog.finished.connect(lambda _result: release())
+            view.load(page_url)
+            dialog.open()
+
+        def catch_download(self, item, name, dialog):
+            url = item.url()
+            item.cancel()
+            if not url.path().lower().endswith(".iso"):
+                QMessageBox.warning(dialog, "Not an ISO", "That download isn't an ISO file, so TuxUtil ignored it.")
+                return
+            # Keep the page open: Microsoft's button still works once the running job is done.
+            if self.main_win.active_process is not None:
+                QMessageBox.warning(dialog, "Job In Progress", "Another job is running. When it finishes, press the download button on this page again.")
+                return
+            dialog.close()
+            # The vendor's link is signed, and other local users can read process arguments.
+            self.start_download(["iso", "download"], f"Downloading {name}", {"TUXUTIL_DOWNLOAD_URL": url.toString(QUrl.FullyEncoded)})
 
         def load_options(self):
             if not self.download_combo.count():
@@ -1010,7 +1072,7 @@ if HAS_PYSIDE6:
         def closeEvent(self, event):
             if self.active_process and self.active_job_is_flash:
                 # The root writer shares this window's output pipe, so closing could kill it mid-write.
-                QMessageBox.information(self, "USB Flash Running", "Wait for the USB flash to finish, then close this window.")
+                QMessageBox.information(self, "USB Flash Running", "Wait for the USB flash to finish, or press Cancel and wait for it to stop. Then close this window.")
                 event.ignore()
                 return
             if self.active_process:
@@ -1420,7 +1482,7 @@ if HAS_PYSIDE6:
                 return
 
             # Hard rule: Passing `--confirm` is only ever done after that typed confirmation.
-            cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path]
+            cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path, "--cancel-on-eof"]
             self.run_cli_job(
                 cmd,
                 f"Flashing {dev.get('model', 'Drive')} ({device_path})",
@@ -1578,11 +1640,7 @@ if HAS_PYSIDE6:
             self.progress_bar.setVisible(True)
             self.btn_cancel_job.setVisible(True)
             self._set_log_visible(True)
-            # ponytail: terminating the CLI can't reach its root writer, so Cancel would report a stop
-            # while the write goes on. Needs a cancel channel through pkexec/sudo, tested as root.
-            self.btn_cancel_job.setEnabled(not is_flash)
-            if is_flash:
-                self.log_text.appendPlainText("Cancel is off during a USB flash: the writer runs as root and can't be stopped from here.")
+            self.btn_cancel_job.setEnabled(True)
             self.set_actions_enabled(False)
 
             proc = QProcess(self)
@@ -1633,7 +1691,8 @@ if HAS_PYSIDE6:
                 self.progress_bar.setVisible(False)
                 self.set_actions_enabled(True)
 
-                if self.job_cancelled:
+                # A flash can finish before its cancel arrives, and then the stick is good.
+                if self.job_cancelled and (exit_code != 0 or not self.active_job_is_flash):
                     self._set_job_status(f"{job_title} cancelled", "warn")
                 elif exit_code == 0:
                     self._set_job_status(f"{job_title} completed successfully", "ok")
@@ -1666,6 +1725,11 @@ if HAS_PYSIDE6:
             self.job_cancelled = True
             self._set_job_status("Terminating job...", "warn")
             proc = self.active_process
+            if self.active_job_is_flash:
+                # The writer runs as root, so a signal from here can't reach it. It watches for this.
+                self.btn_cancel_job.setEnabled(False)
+                proc.closeWriteChannel()
+                return
             proc.terminate()
 
             # Only this job: another may have started by the time the timer fires.
@@ -1702,6 +1766,8 @@ def cmd_gui(args=None):
         )
         return 1
 
+    # Qt WebEngine refuses to load later unless this is set before the application exists.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     win = TuxUtilWindow()
     win.show()

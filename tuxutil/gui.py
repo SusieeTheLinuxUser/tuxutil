@@ -1068,7 +1068,7 @@ if HAS_PYSIDE6:
         def closeEvent(self, event):
             if self.active_process and self.active_job_is_flash:
                 # The root writer shares this window's output pipe, so closing could kill it mid-write.
-                QMessageBox.information(self, "USB Flash Running", "Wait for the USB flash to finish, then close this window.")
+                QMessageBox.information(self, "USB Flash Running", "Wait for the USB flash to finish, or press Cancel and wait for it to stop. Then close this window.")
                 event.ignore()
                 return
             if self.active_process:
@@ -1478,7 +1478,7 @@ if HAS_PYSIDE6:
                 return
 
             # Hard rule: Passing `--confirm` is only ever done after that typed confirmation.
-            cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path]
+            cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path, "--cancel-on-eof"]
             self.run_cli_job(
                 cmd,
                 f"Flashing {dev.get('model', 'Drive')} ({device_path})",
@@ -1636,11 +1636,7 @@ if HAS_PYSIDE6:
             self.progress_bar.setVisible(True)
             self.btn_cancel_job.setVisible(True)
             self._set_log_visible(True)
-            # ponytail: terminating the CLI can't reach its root writer, so Cancel would report a stop
-            # while the write goes on. Needs a cancel channel through pkexec/sudo, tested as root.
-            self.btn_cancel_job.setEnabled(not is_flash)
-            if is_flash:
-                self.log_text.appendPlainText("Cancel is off during a USB flash: the writer runs as root and can't be stopped from here.")
+            self.btn_cancel_job.setEnabled(True)
             self.set_actions_enabled(False)
 
             proc = QProcess(self)
@@ -1691,7 +1687,8 @@ if HAS_PYSIDE6:
                 self.progress_bar.setVisible(False)
                 self.set_actions_enabled(True)
 
-                if self.job_cancelled:
+                # A flash can finish before its cancel arrives, and then the stick is good.
+                if self.job_cancelled and (exit_code != 0 or not self.active_job_is_flash):
                     self._set_job_status(f"{job_title} cancelled", "warn")
                 elif exit_code == 0:
                     self._set_job_status(f"{job_title} completed successfully", "ok")
@@ -1724,6 +1721,11 @@ if HAS_PYSIDE6:
             self.job_cancelled = True
             self._set_job_status("Terminating job...", "warn")
             proc = self.active_process
+            if self.active_job_is_flash:
+                # The writer runs as root, so a signal from here can't reach it. It watches for this.
+                self.btn_cancel_job.setEnabled(False)
+                proc.closeWriteChannel()
+                return
             proc.terminate()
 
             # Only this job: another may have started by the time the timer fires.

@@ -78,6 +78,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "unit:systemd-zram-setup@.service"
+    ],
     "apply": [
       [
         "sh",
@@ -111,6 +114,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "unit:NetworkManager-wait-online.service"
+    ],
     "apply": [
       [
         "systemctl",
@@ -140,6 +146,9 @@
     "families": [
       "arch",
       "debian"
+    ],
+    "requires": [
+      "cmd:ufw"
     ],
     "apply": [
       [
@@ -188,6 +197,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "unit:firewalld.service"
+    ],
     "apply": [
       [
         "systemctl",
@@ -222,6 +234,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "unit:systemd-resolved.service"
+    ],
     "apply": [
       [
         "sh",
@@ -254,6 +269,9 @@
       "debian",
       "fedora",
       "suse"
+    ],
+    "requires": [
+      "unit:bluetooth.service"
     ],
     "apply": [
       [
@@ -288,6 +306,9 @@
       "debian",
       "fedora",
       "suse"
+    ],
+    "requires": [
+      "unit:cups.service"
     ],
     "apply": [
       [
@@ -473,6 +494,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "cmd:flatpak"
+    ],
     "apply": [
       [
         "sh",
@@ -598,6 +622,9 @@
     "families": [
       "debian"
     ],
+    "requires": [
+      "cmd:ubuntu-report"
+    ],
     "apply": [
       [
         "ubuntu-report",
@@ -628,6 +655,9 @@
     "risk": "low",
     "families": [
       "debian"
+    ],
+    "requires": [
+      "unit:whoopsie.service"
     ],
     "apply": [
       [
@@ -660,6 +690,9 @@
     "families": [
       "arch",
       "debian"
+    ],
+    "requires": [
+      "unit:systemd-timesyncd.service"
     ],
     "apply": [
       [
@@ -854,6 +887,9 @@
     "families": [
       "fedora"
     ],
+    "requires": [
+      "unit:dnf-automatic.timer"
+    ],
     "apply": [
       [
         "systemctl",
@@ -888,6 +924,9 @@
       "fedora",
       "suse"
     ],
+    "requires": [
+      "unit:cups-browsed.service"
+    ],
     "apply": [
       [
         "systemctl",
@@ -918,6 +957,9 @@
     "risk": "low",
     "families": [
       "arch"
+    ],
+    "requires": [
+      "unit:paccache.timer"
     ],
     "apply": [
       [
@@ -1015,6 +1057,9 @@
       "debian",
       "fedora",
       "suse"
+    ],
+    "requires": [
+      "unit:systemd-oomd.service"
     ],
     "apply": [
       [

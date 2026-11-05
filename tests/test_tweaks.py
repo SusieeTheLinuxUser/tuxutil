@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -68,6 +69,19 @@ def query_returning(code):
     )
 
 
+def units_listing(*names):
+    out = "".join(f"{name} static\n" for name in names)
+    return mock.patch(
+        "tuxutil.system.query",
+        return_value=subprocess.CompletedProcess([], 0, out, ""),
+    )
+
+
+def requirements_met():
+    """Availability requirements pass: every command on PATH, systemd not asked."""
+    return mock.patch("tuxutil.tweaks.shutil.which", return_value="/usr/bin/tool")
+
+
 def expected_commands(tweak, key):
     cmds = tweak[key]
     if tweak.get("root", True):
@@ -92,6 +106,8 @@ class CatalogTest(unittest.TestCase):
             self.assertTrue(tweak["families"])
             for family in tweak["families"]:
                 self.assertIn(family, KNOWN_FAMILIES)
+            for need in tweak.get("requires", []):
+                self.assertRegex(need, r"^(unit|cmd):[^:\s]+$", tweak["id"])
             for key in ("apply", "undo"):
                 self.assertIsInstance(tweak[key], list)
                 self.assertTrue(tweak[key])
@@ -124,11 +140,11 @@ class DryRunTest(unittest.TestCase):
     def test_apply_and_undo_print_the_catalog_commands(self):
         for tweak in tweaks.load():
             for family in tweak["families"]:
-                with as_family(family), query_returning(1):
+                with as_family(family), query_returning(1), requirements_met():
                     rc, out, err = invoke(["--dry-run", "tweaks", "apply", tweak["id"]])
                 self.assertEqual(rc, 0, f"{tweak['id']} {family} {err}")
                 self.assertEqual(commands(out), expected_commands(tweak, "apply"), tweak["id"])
-                with as_family(family), query_returning(0):
+                with as_family(family), query_returning(0), requirements_met():
                     rc, out, err = invoke(["--dry-run", "tweaks", "undo", tweak["id"]])
                 self.assertEqual(rc, 0, err)
                 self.assertEqual(commands(out), expected_commands(tweak, "undo"), tweak["id"])
@@ -147,7 +163,7 @@ class DryRunTest(unittest.TestCase):
         self.assertIn("Unknown", err + out)
 
     def test_ubuntu_report_stays_unprivileged(self):
-        with as_family("debian"), query_returning(1):
+        with as_family("debian"), query_returning(1), requirements_met():
             rc, out, _ = invoke(["--dry-run", "tweaks", "apply", "disable-ubuntu-report", "disable-whoopsie"])
         self.assertEqual(rc, 0)
         self.assertIn("$ ubuntu-report -f send no\n", out)
@@ -159,7 +175,7 @@ class DryRunTest(unittest.TestCase):
         self.assertIn("whoopsie.service", got[1][2])
 
     def test_root_tweaks_share_one_shell(self):
-        with as_family("arch"), query_returning(1):
+        with as_family("arch"), query_returning(1), requirements_met():
             rc, out, err = invoke(["--dry-run", "tweaks", "apply", "enable-ufw", "fstrim-timer"])
         self.assertEqual(rc, 0, err)
         got = commands(out)
@@ -238,8 +254,76 @@ class DryRunTest(unittest.TestCase):
             self.assertIn(row["risk"], RISKS)
             self.assertIsInstance(row["available"], bool)
             self.assertIn(row["applied"], (True, False, None))
+            self.assertIsInstance(row["reason"], str)
             if not row["available"]:
                 self.assertIsNone(row["applied"])
+                self.assertTrue(row["reason"])
+            else:
+                self.assertEqual(row["reason"], "")
+
+
+class RequirementsTest(unittest.TestCase):
+    def list_rows(self, family, names):
+        with as_family(family), units_listing(*names):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        return {row["id"]: row for row in json.loads(out)}
+
+    def test_missing_unit_hides_the_tweak(self):
+        rows = self.list_rows("fedora", ["sshd.service"])
+        row = rows["enable-firewalld"]
+        self.assertFalse(row["available"])
+        self.assertEqual(row["reason"], "needs firewalld.service")
+        self.assertIsNone(row["applied"])
+
+    def test_listed_unit_keeps_the_tweak(self):
+        rows = self.list_rows("fedora", ["firewalld.service"])
+        self.assertTrue(rows["enable-firewalld"]["available"])
+        self.assertEqual(rows["enable-firewalld"]["reason"], "")
+
+    def test_unit_query_failure_hides_nothing(self):
+        # systemctl missing or failing (query_returning mocks rc != 0) must treat units as present.
+        with as_family("fedora"), query_returning(1):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        rows = {row["id"]: row for row in json.loads(out)}
+        self.assertTrue(rows["enable-firewalld"]["available"])
+        self.assertEqual(rows["enable-firewalld"]["reason"], "")
+
+    def test_missing_command_hides_the_tweak(self):
+        with as_family("arch"), query_returning(1), mock.patch(
+            "tuxutil.tweaks.shutil.which", return_value=None
+        ):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        row = {row["id"]: row for row in json.loads(out)}["enable-ufw"]
+        self.assertFalse(row["available"])
+        self.assertEqual(row["reason"], "needs ufw")
+
+    def test_present_command_keeps_the_tweak(self):
+        with as_family("arch"), query_returning(1), mock.patch(
+            "tuxutil.tweaks.shutil.which", lambda name, path=None: f"/usr/bin/{name}"
+        ):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        row = {row["id"]: row for row in json.loads(out)}["enable-ufw"]
+        self.assertTrue(row["available"])
+
+    def test_a_tool_in_sbin_counts_without_sbin_on_path(self):
+        with as_family("arch"), query_returning(1), mock.patch.dict(os.environ, {"PATH": "/nonexistent"}), \
+                mock.patch("tuxutil.tweaks.shutil.which", side_effect=lambda name, path=None: "/usr/sbin/ufw" if "/usr/sbin" in (path or "") else None):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue({row["id"]: row for row in json.loads(out)}["enable-ufw"]["available"])
+
+    def test_apply_names_the_missing_requirement(self):
+        with as_family("fedora"), units_listing("sshd.service"), mock.patch(
+            "tuxutil.tweaks.shutil.which", return_value="/usr/bin/tool"
+        ):
+            rc, out, err = invoke(["--dry-run", "tweaks", "apply", "enable-firewalld"])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("enable-firewalld (needs firewalld.service)", err + out)
+        self.assertEqual(commands(out), [])
 
 
 def _run_relocated(tweak, key, etc):

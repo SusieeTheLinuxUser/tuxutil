@@ -148,6 +148,10 @@ def commands_for(native, flatpaks, family, verb):
     if native:
         if family not in table:
             raise SystemExit(f"Don't know how to {verb} native packages on family '{family}'.")
+        if family == "debian" and verb == "install":
+            # A fresh system has no package lists and old ones point at removed files.
+            # One broken third-party repo must not block the install, as the old lists may still do.
+            steps.append((True, ["sh", "-c", "apt-get update || true"]))
         steps.append((True, [*table[family], *native]))
     if flatpaks:
         if verb == "install":

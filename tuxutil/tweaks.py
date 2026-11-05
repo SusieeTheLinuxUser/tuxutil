@@ -1,5 +1,6 @@
 """Apply and undo system tweaks from the catalog (tweaks.json)."""
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -42,7 +43,8 @@ def unavailability_reason(tweak, family, units):
         if kind == "unit":
             if units is not None and name not in units:
                 return f"needs {name}"
-        elif kind == "cmd" and not shutil.which(name):
+        # A desktop user's PATH often lacks the sbin folders, where tools like ufw live.
+        elif kind == "cmd" and not shutil.which(name, path=f"{os.environ.get('PATH', '')}:/usr/sbin:/sbin"):
             return f"needs {name}"
     return ""
 

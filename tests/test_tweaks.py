@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -301,12 +302,19 @@ class RequirementsTest(unittest.TestCase):
 
     def test_present_command_keeps_the_tweak(self):
         with as_family("arch"), query_returning(1), mock.patch(
-            "tuxutil.tweaks.shutil.which", lambda name: f"/usr/bin/{name}"
+            "tuxutil.tweaks.shutil.which", lambda name, path=None: f"/usr/bin/{name}"
         ):
             rc, out, err = invoke(["tweaks", "list", "--json"])
         self.assertEqual(rc, 0, err)
         row = {row["id"]: row for row in json.loads(out)}["enable-ufw"]
         self.assertTrue(row["available"])
+
+    def test_a_tool_in_sbin_counts_without_sbin_on_path(self):
+        with as_family("arch"), query_returning(1), mock.patch.dict(os.environ, {"PATH": "/nonexistent"}), \
+                mock.patch("tuxutil.tweaks.shutil.which", side_effect=lambda name, path=None: "/usr/sbin/ufw" if "/usr/sbin" in (path or "") else None):
+            rc, out, err = invoke(["tweaks", "list", "--json"])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue({row["id"]: row for row in json.loads(out)}["enable-ufw"]["available"])
 
     def test_apply_names_the_missing_requirement(self):
         with as_family("fedora"), units_listing("sshd.service"), mock.patch(

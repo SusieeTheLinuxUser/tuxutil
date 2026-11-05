@@ -79,7 +79,7 @@
       "suse"
     ],
     "requires": [
-      "unit:dev-zram0.swap"
+      "unit:systemd-zram-setup@.service"
     ],
     "apply": [
       [

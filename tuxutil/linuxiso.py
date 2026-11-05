@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import system
 
@@ -853,14 +854,6 @@ def _materialize(iso, info, scratch):
 MISO_UPPER_LAYERS = ("livefs", "mhwdfs", "desktopfs")
 
 
-class _HostnameOnly:
-    overlay = None
-    first_boot = None
-
-    def __init__(self, hostname):
-        self.hostname = hostname
-
-
 def _patch_upper_hostname(iso, upper, scratch, args):
     """--hostname must also land in the top miso layer, not only in rootfs.
 
@@ -883,7 +876,7 @@ def _patch_upper_hostname(iso, upper, scratch, args):
             continue
         top = scratch / name / "root"
         pseudo, comp, block = _unpack_squash(image, top)
-        _apply_identity(top, _HostnameOnly(args.hostname))
+        _apply_identity(top, SimpleNamespace(overlay=None, first_boot=None, hostname=args.hostname))
         repack = {"dir": top, "kind": "squashfs", "iso_path": path, "pseudo": pseudo,
                   "compression": comp, "block": block, "image": image}
         # A private scratch dir, so this repack cannot overwrite the root one.

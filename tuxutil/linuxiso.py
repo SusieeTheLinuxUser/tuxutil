@@ -277,6 +277,10 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
             supported = False
             notes.append("Live root is an ext4 LiveOS/rootfs.img nested in the squashfs "
                          "(older Fedora), which isn't supported.")
+        elif image_kind == "unchecked":
+            supported = False
+            notes.append("Couldn't look inside the squashfs for a nested LiveOS/rootfs.img. "
+                         "Install squashfs-tools (unsquashfs) and try again.")
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
@@ -732,12 +736,16 @@ def _primary_kind(iso, paths):
     if not layout["squashfs"]:
         return ""
     kind = sniff_image(image_head(iso, layout["squashfs"]))
-    if kind == "squashfs" and layout["family"] == "fedora" and shutil.which("unsquashfs"):
+    if kind == "squashfs" and layout["family"] == "fedora":
         # Older Fedora (before the 42 switch to erofs) wraps an ext4 LiveOS/rootfs.img in the squashfs. List it in place.
+        if not shutil.which("unsquashfs"):
+            return "unchecked"
         listing = subprocess.run(["unsquashfs", "-o", str(_file_offset(iso, layout["squashfs"])),
                                   "-l", "-d", "", str(iso), "LiveOS/rootfs.img"],
-                                 capture_output=True, text=True, errors="replace").stdout
-        if re.search(r"(?m)^/?LiveOS/rootfs\.img$", listing):
+                                 capture_output=True, text=True, errors="replace")
+        if listing.returncode != 0:
+            return "unchecked"
+        if re.search(r"(?m)^/?LiveOS/rootfs\.img$", listing.stdout):
             return "nested"
     return kind
 

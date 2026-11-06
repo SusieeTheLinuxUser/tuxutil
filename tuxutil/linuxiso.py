@@ -273,6 +273,14 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
         elif image_kind == "ext4":
             supported = False
             notes.append("Live root is an ext4 image. This host has no rootless ext4 writer.")
+        elif image_kind == "nested":
+            supported = False
+            notes.append("Live root is an ext4 LiveOS/rootfs.img nested in the squashfs "
+                         "(older Fedora), which isn't supported.")
+        elif image_kind == "unchecked":
+            supported = False
+            notes.append("Couldn't list the squashfs with unsquashfs to check for a nested LiveOS/rootfs.img. "
+                         "Check that squashfs-tools is installed and the ISO is readable.")
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
@@ -659,14 +667,20 @@ def extract_file(iso, inner, dest):
     run(["xorriso", "-osirrox", "on", "-indev", str(iso), "-extract", inner, str(dest)])
 
 
-def image_head(iso, inner, size=4096):
+def _file_offset(iso, inner):
+    """Byte offset of a file's data inside the ISO, or None."""
     result = subprocess.run(["xorriso", "-indev", str(iso), "-find", inner, "-exec", "report_lba"],
                             capture_output=True, text=True)
     match = re.search(r"File data lba:\s*\d+\s*,\s*(\d+)\s*,", result.stdout)
-    if not match:
+    return int(match.group(1)) * 2048 if match else None
+
+
+def image_head(iso, inner, size=4096):
+    offset = _file_offset(iso, inner)
+    if offset is None:
         return b""
     with open(iso, "rb") as handle:
-        handle.seek(int(match.group(1)) * 2048)
+        handle.seek(offset)
         return handle.read(size)
 
 
@@ -721,7 +735,20 @@ def _primary_kind(iso, paths):
     layout = detect_layout(paths)
     if not layout["squashfs"]:
         return ""
-    return sniff_image(image_head(iso, layout["squashfs"]))
+    kind = sniff_image(image_head(iso, layout["squashfs"]))
+    if kind == "squashfs" and layout["family"] == "fedora":
+        # Older Fedora (before the 42 switch to erofs) wraps an ext4 LiveOS/rootfs.img in the squashfs. List it in place.
+        if not shutil.which("unsquashfs"):
+            return "unchecked"
+        listing = subprocess.run(["unsquashfs", "-o", str(_file_offset(iso, layout["squashfs"])),
+                                  "-l", "-d", "", str(iso), "LiveOS/rootfs.img"],
+                                 capture_output=True, text=True, errors="replace")
+        if listing.returncode != 0:
+            _warn(f"unsquashfs failed: {listing.stderr.strip()}")
+            return "unchecked"
+        if re.search(r"(?m)^/?LiveOS/rootfs\.img$", listing.stdout):
+            return "nested"
+    return kind
 
 
 def _read_small(iso, inner):

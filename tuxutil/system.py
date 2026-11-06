@@ -62,6 +62,7 @@ TOOL_PACKAGES = {
     "sfdisk": {"default": "util-linux", "debian": "fdisk"},
     "mkfs.vfat": {"default": "dosfstools"},
     "mcopy": {"default": "mtools"},
+    "mdir": {"default": "mtools"},
     "lsblk": {"default": "util-linux"},
     "unshare": {"default": "util-linux"},
     "newuidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},

@@ -151,7 +151,7 @@ def cmd_build(args):
         raise SystemExit(f"Overlay directory not found: {args.overlay}")
     if args.first_boot and not Path(args.first_boot).is_file():
         raise SystemExit(f"First-boot script not found: {args.first_boot}")
-    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap", "newgidmap"])
+    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap", "newgidmap", "mdir", "mcopy"])
     err = space_error(shutil.disk_usage(out.parent).free, bytes_needed(iso.stat().st_size))
     if err:
         raise SystemExit(err + f" ({out.parent})")
@@ -1020,7 +1020,8 @@ def _install_first_boot(root, script):
     shutil.copyfile(script, target)
     target.chmod(0o755)
     wrapper = _inside(root, "usr/local/sbin/tuxutil-firstboot")
-    wrapper.write_text("#!/bin/sh\nexec /bin/sh /usr/local/lib/tuxutil/first-boot\n")
+    # Run it directly so its own #! line (bash, python...) is used; sh still runs one without it.
+    wrapper.write_text("#!/bin/sh\nexec /usr/local/lib/tuxutil/first-boot\n")
     wrapper.chmod(0o755)
     _inside(root, "etc/systemd/system/tuxutil-firstboot.service").write_text(
         "[Unit]\n"

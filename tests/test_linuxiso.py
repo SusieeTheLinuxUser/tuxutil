@@ -167,6 +167,15 @@ class FirstBootTest(unittest.TestCase):
             self.assertIn("enable tuxutil-firstboot.service",
                           (root / "etc/systemd/system-preset/00-tuxutil.preset").read_text())
 
+    def test_script_runs_with_its_own_interpreter(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root, script = Path(folder, "root"), Path(folder, "s.sh")
+            script.write_text("#!/bin/bash\n")
+            linuxiso._install_first_boot(root, script)
+            wrapper = (root / "usr/local/sbin/tuxutil-firstboot").read_text()
+            self.assertIn("exec /usr/local/lib/tuxutil/first-boot\n", wrapper)
+            self.assertNotIn("/bin/sh /usr", wrapper)
+
 
 class ScratchTest(unittest.TestCase):
     def test_existing_work_folder_survives_and_scratch_is_removed(self):

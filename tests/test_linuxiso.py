@@ -58,6 +58,23 @@ class DetectTest(unittest.TestCase):
         self.assertFalse(linuxiso.describe(paths, image_kind="unchecked")["supported"])
         self.assertTrue(linuxiso.describe(paths, image_kind="squashfs")["supported"])
 
+    def test_primary_kind_lists_inside_fedora_squashfs(self):
+        paths = ["/LiveOS/squashfs.img"]
+
+        def kind(stdout, returncode=0):
+            done = SimpleNamespace(stdout=stdout, returncode=returncode)
+            with patch.object(linuxiso, "image_head", return_value=linuxiso.SQUASH_MAGIC), \
+                 patch.object(linuxiso, "_file_offset", return_value=4096), \
+                 patch.object(linuxiso.shutil, "which", return_value="/usr/bin/unsquashfs"), \
+                 patch.object(linuxiso.subprocess, "run", return_value=done) as run:
+                result = linuxiso._primary_kind("x.iso", paths)
+            self.assertIn("4096", run.call_args.args[0])
+            return result
+
+        self.assertEqual(kind("LiveOS/rootfs.img\n"), "nested")
+        self.assertEqual(kind(""), "squashfs")
+        self.assertEqual(kind("", returncode=1), "unchecked")
+
 
 class BootTextTest(unittest.TestCase):
     def test_grub_args_go_before_the_separator(self):

@@ -165,7 +165,7 @@ Everything below ran in QEMU/KVM on image files.
 | Garuda, AnduinOS | Boots under UEFI. The live system overrode `--hostname` when last checked, before the Manjaro fix. |
 | Tails | Boots under BIOS only, the same as the stock ISO. Tails may refuse a modified system, and changing it undermines what Tails is for. |
 | Kali, Debian netinst, openSUSE, OpenMediaVault | Refused: these boot an installer, not a live system |
-| Bazzite, NixOS, Chimera, TUXEDO, Fedora 41 and older | Refused: unsupported layout (old Fedora nests its root in an ext4 `rootfs.img`) |
+| Bazzite, NixOS, Chimera, TUXEDO, older Fedora (34 and earlier confirmed) | Refused: unsupported layout (old Fedora nests its root in an ext4 `rootfs.img`) |
 
 On Garuda and Manjaro, files in upper image layers can override your overlay. `--add-pkg` ran for real on Arch, Mint and Fedora, and is refused on Ubuntu's layered images. `--remove-pkg` and `--label` have not been boot-tested.
 

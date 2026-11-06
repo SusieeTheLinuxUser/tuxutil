@@ -276,7 +276,7 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
         elif image_kind == "nested":
             supported = False
             notes.append("Live root is an ext4 LiveOS/rootfs.img nested in the squashfs "
-                         "(Fedora 41 and older), which isn't supported.")
+                         "(older Fedora), which isn't supported.")
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
@@ -733,7 +733,7 @@ def _primary_kind(iso, paths):
         return ""
     kind = sniff_image(image_head(iso, layout["squashfs"]))
     if kind == "squashfs" and layout["family"] == "fedora" and shutil.which("unsquashfs"):
-        # Fedora 41 and older wrap an ext4 LiveOS/rootfs.img in the squashfs. List it in place.
+        # Older Fedora (before the 42 switch to erofs) wraps an ext4 LiveOS/rootfs.img in the squashfs. List it in place.
         listing = subprocess.run(["unsquashfs", "-o", str(_file_offset(iso, layout["squashfs"])),
                                   "-l", "-d", "", str(iso), "LiveOS/rootfs.img"],
                                  capture_output=True, text=True, errors="replace").stdout

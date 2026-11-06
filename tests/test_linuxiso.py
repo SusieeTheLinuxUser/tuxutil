@@ -52,7 +52,7 @@ class DetectTest(unittest.TestCase):
         self.assertFalse(info["supported"])
 
     def test_nested_fedora_rootfs_refused(self):
-        # Fedora 41 and older: squashfs.img wraps an ext4 LiveOS/rootfs.img, which build refuses.
+        # Older Fedora: squashfs.img wraps an ext4 LiveOS/rootfs.img, which build refuses.
         paths = ["/LiveOS/squashfs.img"]
         self.assertFalse(linuxiso.describe(paths, image_kind="nested")["supported"])
         self.assertTrue(linuxiso.describe(paths, image_kind="squashfs")["supported"])

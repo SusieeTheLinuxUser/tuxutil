@@ -62,7 +62,7 @@ class DetectTest(unittest.TestCase):
         paths = ["/LiveOS/squashfs.img"]
 
         def kind(stdout, returncode=0):
-            done = SimpleNamespace(stdout=stdout, returncode=returncode)
+            done = SimpleNamespace(stdout=stdout, stderr="", returncode=returncode)
             with patch.object(linuxiso, "image_head", return_value=linuxiso.SQUASH_MAGIC), \
                  patch.object(linuxiso, "_file_offset", return_value=4096), \
                  patch.object(linuxiso.shutil, "which", return_value="/usr/bin/unsquashfs"), \

@@ -279,8 +279,8 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
                          "(older Fedora), which isn't supported.")
         elif image_kind == "unchecked":
             supported = False
-            notes.append("Couldn't look inside the squashfs for a nested LiveOS/rootfs.img. "
-                         "Install squashfs-tools (unsquashfs) and try again.")
+            notes.append("Couldn't list the squashfs with unsquashfs to check for a nested LiveOS/rootfs.img. "
+                         "Check that squashfs-tools is installed and the ISO is readable.")
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
@@ -744,6 +744,7 @@ def _primary_kind(iso, paths):
                                   "-l", "-d", "", str(iso), "LiveOS/rootfs.img"],
                                  capture_output=True, text=True, errors="replace")
         if listing.returncode != 0:
+            _warn(f"unsquashfs failed: {listing.stderr.strip()}")
             return "unchecked"
         if re.search(r"(?m)^/?LiveOS/rootfs\.img$", listing.stdout):
             return "nested"

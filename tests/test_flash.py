@@ -283,18 +283,13 @@ class WriteGuardTest(unittest.TestCase):
                 same = snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="A"), serial="1")])
                 self.assertEqual(flash.prepare(str(iso), "/dev/sdb", "/dev/sdb", snapshot=same, expect_id=picked)["device"], "/dev/sdb")
 
-    def test_same_disk_ignores_a_serial_only_one_side_could_read(self):
-        self.assertTrue(flash.same_disk("8:A:", "8:A:123"))
-        self.assertFalse(flash.same_disk("8:A:1", "8:A:2"))
-        self.assertFalse(flash.same_disk("8:A:", "8:B:"))
-        self.assertFalse(flash.same_disk("8:A:", "16:A:"))
-        # Colons in a model or serial are escaped, so they can't shift the split.
-        a_b = flash.disk_id({"size": 500, "model": "A:B", "serial": ""})
-        a_bc = flash.disk_id({"size": 500, "model": "A", "serial": "B:C"})
-        self.assertFalse(flash.same_disk(a_b, a_bc))
-        self.assertTrue(flash.same_disk(flash.disk_id({"size": 500, "model": "M", "serial": ""}),
-                                        flash.disk_id({"size": 500, "model": "M", "serial": "AB:CD"})))
-        self.assertFalse(flash.same_disk("garbage", "garbage"))
+    def test_disk_id_tells_sticks_apart(self):
+        ident = lambda model, serial, size=500: flash.disk_id({"size": size, "model": model, "serial": serial})
+        self.assertEqual(ident("A", "1"), ident(" A ", "1 "))  # whitespace from lsblk is trimmed
+        self.assertNotEqual(ident("A", ""), ident("A", "123"))  # a missing serial is not a wildcard
+        self.assertNotEqual(ident("A", "1"), ident("A", "1", size=16))
+        # Colons in a model or serial are escaped, so they can't shift the fields.
+        self.assertNotEqual(ident("A:B", ""), ident("A", "B:"))
 
     def test_root_argv_passes_the_picked_disk(self):
         argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", expect_id="8:A:1")

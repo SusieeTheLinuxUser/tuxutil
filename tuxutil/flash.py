@@ -309,14 +309,6 @@ def disk_id(node):
     return f"{size}:{model}:{serial}"
 
 
-def same_disk(a, b):
-    """Size and model must match; the serial only when both sides could read one (lsblk as root can see more)."""
-    parts_a, parts_b = a.split(":"), b.split(":")
-    if len(parts_a) != 3 or len(parts_b) != 3:
-        return False  # not an id this version wrote: refuse rather than guess
-    return parts_a[:2] == parts_b[:2] and (not parts_a[2] or not parts_b[2] or parts_a[2] == parts_b[2])
-
-
 def list_disks(normal, inverse, findmnt_doc, swaps_text):
     devices, parents = build_topology(normal, inverse)
     mounts = mounts_by_disk(devices, parents, findmnt_doc, swaps_text)
@@ -416,7 +408,10 @@ def prepare(iso, device, confirm, snapshot=None, expect_id=None):
             refuse(f"{real}: {reason}")
         if expect_id is not None:
             node = node_for(real, build_topology(snapshot[0], snapshot[1])[0])
-            if node is None or not same_disk(disk_id(node), expect_id):
+            # Exact match, serial included: a stick with no serial must not stand in for one with.
+            # ponytail: two serial-less sticks of one model and size still look the same to lsblk;
+            # a by-id/USB-port check would be needed to tell those apart.
+            if node is None or disk_id(node) != expect_id:
                 refuse(f"{real} is no longer the disk you picked (was it swapped?); refresh the list and pick again")
         size = _block_size(real, snapshot)
     elif test_mode() and stat.S_ISREG(st.st_mode):

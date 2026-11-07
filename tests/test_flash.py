@@ -291,6 +291,34 @@ class WriteGuardTest(unittest.TestCase):
         # Colons in a model or serial are escaped, so they can't shift the fields.
         self.assertNotEqual(ident("A:B", ""), ident("A", "B:"))
 
+    def test_a_swap_during_unmount_is_refused_by_the_recheck(self):
+        stick = lambda model, serial: snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model=model), serial=serial)])
+        picked = flash.disk_id(dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="A"), serial="1"))
+        real_stat = os.stat
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp, "x.iso")
+            iso.write_bytes(b"x" * 1024)
+            fake = lambda p, *a, **k: os.stat_result((stat.S_IFBLK,) + (0,) * 9) if p == "/dev/sdb" else real_stat(p, *a, **k)
+            with mock.patch.object(flash, "canon", side_effect=lambda p: p), \
+                    mock.patch.object(flash.os, "stat", side_effect=fake), \
+                    mock.patch.object(flash, "load_snapshot", side_effect=[stick("A", "1"), stick("B", "2")]), \
+                    mock.patch.object(flash, "unmount_target") as unmount:
+                with self.assertRaises(SystemExit) as caught:
+                    flash.prepare_for_write(str(iso), "/dev/sdb", "/dev/sdb", picked)
+            unmount.assert_called_once()  # the first check passed; the one after unmount refused
+            self.assertIn("no longer the disk you picked", str(caught.exception))
+
+    def test_cmd_write_hands_the_picked_disk_to_the_root_side(self):
+        args = argparse_ns("x.iso", "/dev/sdb", "/dev/sdb")
+        args.expect_id = "8:A:1"
+        with mock.patch.object(flash, "test_mode", return_value=False), \
+                mock.patch.object(flash, "prepare"), \
+                mock.patch.object(system, "as_root", side_effect=lambda argv: argv), \
+                mock.patch.object(system, "run") as run:
+            flash.cmd_write(args)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--expect-id") + 1], "8:A:1")
+
     def test_root_argv_passes_the_picked_disk(self):
         argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", expect_id="8:A:1")
         self.assertEqual(argv[-2:], ["--expect-id", "8:A:1"])

@@ -1019,9 +1019,13 @@ def _apply_identity(root, args):
             rows = []
             replaced = False
             for line in hosts.read_text(errors="replace").splitlines():
-                if line.split()[:1] == ["127.0.1.1"]:
+                fields = line.split()
+                if fields[:1] == ["127.0.1.1"]:
                     rows.append(f"127.0.1.1\t{args.hostname}")
                     replaced = True
+                elif fields[:1] == ["127.0.0.1"] and args.hostname in fields[1:] and len(fields) > 2:
+                    # Left on the localhost line, the hostname would resolve to "localhost".
+                    rows.append("\t".join([fields[0], " ".join(f for f in fields[1:] if f != args.hostname)]))
                 else:
                     rows.append(line)
             if not replaced:

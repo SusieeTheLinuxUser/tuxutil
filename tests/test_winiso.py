@@ -697,6 +697,7 @@ class TestInfoUnderDryRun(unittest.TestCase):
                     patch("sys.stdout", new_callable=io.StringIO):
                 rc = winiso.cmd_info(argparse.Namespace(iso="in.iso", json=True))
             self.assertEqual(rc, 0)
+            self.assertTrue(system.DRY_RUN)  # restored for any later in-process caller
         finally:
             system.DRY_RUN = False
         self.assertEqual(seen, [False])

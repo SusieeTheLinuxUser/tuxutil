@@ -1133,10 +1133,13 @@ def _option_table():
 
 def cmd_info(args):
     # info only reads the ISO, so dry-run must still inspect it for real.
-    system.DRY_RUN = False
-    system.require_tools(["7z", "wimlib-imagex"])
-    _validate_iso(args.iso)
-    editions = _get_editions(args.iso)
+    dry_run, system.DRY_RUN = system.DRY_RUN, False
+    try:
+        system.require_tools(["7z", "wimlib-imagex"])
+        _validate_iso(args.iso)
+        editions = _get_editions(args.iso)
+    finally:
+        system.DRY_RUN = dry_run
     data = {
         "editions": [
             {"index": e.index, "name": e.name, "arch": e.arch,

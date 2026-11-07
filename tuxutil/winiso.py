@@ -313,7 +313,8 @@ def _validate_iso(iso_path: str):
         raise SystemExit(f"ISO not found: {iso_path}")
     # query, not run: a read-only probe, so it still runs in --dry-run mode
     # (run would return a stub with no listing and reject every ISO).
-    result = system.query(["7z", "l", iso_path, "sources/install.wim", "sources/install.esd"])
+    result = system.query(["7z", "l", iso_path, "sources/install.wim", "sources/install.esd"],
+                          timeout=120)
     if result.returncode != 0:
         raise SystemExit(f"Cannot read ISO: {iso_path}")
     listing = (result.stdout or "").lower()

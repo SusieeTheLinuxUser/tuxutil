@@ -176,15 +176,17 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
 
     def test_clicking_an_edition_fills_a_choice_typed_edition_combo(self):
-        # A schema may type --edition as "choice" (the fake CLI does); that builds a combo.
+        # A schema may type --edition as "choice" (the fake CLI does); that builds a
+        # non-editable combo listing edition names, so a click must select by name.
         tab = self.win.tab_winiso
         tab.dynamic_form = gui.DynamicFormWidget([
-            {"flag": "--edition", "type": "choice", "label": "Edition",
-             "default": "1", "choices": ["1", "2", "6"]},
+            {"flag": "--edition", "type": "choice", "label": "Target Windows Edition",
+             "default": "Windows 11 Home",
+             "choices": ["Windows 11 Home", "Windows 11 Pro", "Windows 11 Enterprise"]},
         ])
-        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
+        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["2", "Windows 11 Pro"]))
         tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
-        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
+        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "Windows 11 Pro"])
 
     def test_download_catalog_is_split_by_kind(self):
         self.win.tabs.setCurrentIndex(5)

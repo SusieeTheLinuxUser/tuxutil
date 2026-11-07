@@ -966,7 +966,12 @@ if HAS_PYSIDE6:
                 text = items[0].text(0)
                 # The schema types --edition as "str" or "choice", so the widget varies.
                 if isinstance(widget, QComboBox):
-                    widget.setCurrentText(text)
+                    # A choice combo lists names (column 1) and is not editable, so
+                    # setCurrentText with the index (column 0) would do nothing.
+                    for i in (widget.findText(text), widget.findText(items[0].text(1))):
+                        if i >= 0:
+                            widget.setCurrentIndex(i)
+                            return
                 else:
                     widget.setText(text)
 

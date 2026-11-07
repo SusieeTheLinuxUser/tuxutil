@@ -83,6 +83,13 @@ class TestGuiNoPySide6(unittest.TestCase):
         self.assertNotIn("TopSecret456", masked)
         self.assertIn("******", masked)
 
+    def test_a_path_containing_secret_is_not_masked_but_a_secret_flag_is(self):
+        cmd = ["winiso", "build", "/x/my-secret.iso", "-o", "/x/out.iso"]
+        self.assertEqual(gui.mask_command_for_log(cmd), shlex.join(cmd))
+        masked = gui.mask_command_for_log(["x", "--password", "hunter2"])
+        self.assertNotIn("hunter2", masked)
+        self.assertIn("******", masked)
+
     def test_signed_link_is_masked_in_the_log(self):
         masked = gui.mask_command_for_log(["tuxutil", "iso", "download", "https://example.test/a.iso?sig=abc&t=1"])
         self.assertNotIn("abc", masked)
@@ -187,6 +194,29 @@ class TestTuxUtilGui(unittest.TestCase):
         tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["2", "Windows 11 Pro"]))
         tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
         self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "Windows 11 Pro"])
+
+    def test_changing_the_iso_clears_the_stale_edition(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--edition", "type": "str", "label": "E"}])
+        tab.dynamic_form.fields["--edition"][1].setText("6")
+        tab.iso_path_edit.setText("/fake/other.iso")
+        self.assertEqual(tab.dynamic_form.fields["--edition"][1].text(), "")
+
+    def test_retry_loads_options_when_the_form_is_empty(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = None
+        with patch.object(tab, "load_options") as load_options:
+            tab.on_retry()
+        load_options.assert_called_once()
+
+    def test_retry_refreshes_info_when_the_form_is_there(self):
+        tab = self.win.tab_linuxiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--pkg", "type": "str", "label": "P"}])
+        with patch.object(tab, "load_options") as load_options, \
+                patch.object(tab, "on_refresh_info") as refresh:
+            tab.on_retry()
+        load_options.assert_not_called()
+        refresh.assert_called_once()
 
     def test_download_catalog_is_split_by_kind(self):
         self.win.tabs.setCurrentIndex(5)

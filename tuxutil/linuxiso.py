@@ -344,8 +344,10 @@ def guess_arch(paths):
                         ("arm64", "aarch64"), ("i686", "i386"), ("i386", "i386")):
         if token in blob:
             return name
-    if "bootx64.efi" in blob or "bootx64.efi" in blob:
+    if "bootx64.efi" in blob:
         return "x86_64"
+    if "bootaa64.efi" in blob:
+        return "aarch64"
     return "unknown"
 
 
@@ -855,7 +857,8 @@ def _materialize(iso, info, scratch):
         return _materialize_layered(iso, layers, scratch)
     image = scratch / "image"
     extract_file(iso, info["squashfs"], image)
-    kind = sniff_image(image.read_bytes()[:4096])
+    with open(image, "rb") as f:
+        kind = sniff_image(f.read(4096))
     root = scratch / "root"
     pseudo = None
     iso_path = info["squashfs"]
@@ -1016,9 +1019,15 @@ def _apply_identity(root, args):
             rows = []
             replaced = False
             for line in hosts.read_text(errors="replace").splitlines():
-                if line.startswith("127.0.1.1") or line.startswith("127.0.0.1 ") and args.hostname in line.split():
+                fields = line.split()
+                if fields[:1] == ["127.0.1.1"]:
                     rows.append(f"127.0.1.1\t{args.hostname}")
                     replaced = True
+                elif fields[:1] == ["127.0.0.1"] and args.hostname != "localhost" and args.hostname in fields[1:]:
+                    # Left on the loopback line, the hostname would resolve there, not to 127.0.1.1.
+                    names = [f for f in fields[1:] if f != args.hostname]
+                    if names:
+                        rows.append("\t".join([fields[0], " ".join(names)]))
                 else:
                     rows.append(line)
             if not replaced:

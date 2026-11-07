@@ -175,6 +175,17 @@ class TestTuxUtilGui(unittest.TestCase):
         tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
         self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
 
+    def test_clicking_an_edition_fills_a_choice_typed_edition_combo(self):
+        # A schema may type --edition as "choice" (the fake CLI does); that builds a combo.
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([
+            {"flag": "--edition", "type": "choice", "label": "Edition",
+             "default": "1", "choices": ["1", "2", "6"]},
+        ])
+        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
+        tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
+        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
+
     def test_download_catalog_is_split_by_kind(self):
         self.win.tabs.setCurrentIndex(5)
         tab = self.win.tab_linuxiso
@@ -417,6 +428,31 @@ class TestTuxUtilGui(unittest.TestCase):
         # Test flash execution
         self.win.btn_flash_write.click()
         self.assertTrue(wait_until(lambda: "Flash completed" in self.win.log_text.toPlainText()))
+
+    def test_flash_button_stays_disabled_while_a_job_runs(self):
+        self.win.tabs.setCurrentIndex(6)
+        self.assertTrue(wait_until(lambda: len(self.win.raw_devices) > 0))
+        sdb_idx = next(i for i, d in enumerate(self.win.raw_devices) if d["path"] == "/dev/sdb")
+        self.win.device_combo.setCurrentIndex(sdb_idx)
+        pump_events(20)
+        self.win.flash_iso_edit.setText("/fake/path/live.iso")
+        self.win.confirm_input.setText("/dev/sdb")
+        pump_events(20)
+        self.assertTrue(self.win.btn_flash_write.isEnabled())
+
+        # While any job runs, the destructive button and Refresh Devices stay disabled,
+        # however valid the ISO, device and typed confirmation are.
+        self.win.run_cli_job(["test-long", "0.01"], "Some Job")
+        pump_events(80)
+        self.assertIsNotNone(self.win.active_process)
+        self.assertFalse(self.win.btn_flash_write.isEnabled())
+        self.assertFalse(self.win.btn_refresh_devices.isEnabled())
+
+        # And both come back once the job has ended.
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        pump_events(20)
+        self.assertTrue(self.win.btn_flash_write.isEnabled())
+        self.assertTrue(self.win.btn_refresh_devices.isEnabled())
 
     def test_long_job_progress_and_cancel(self):
         self.win.run_cli_job(["test-long", "0.05"], "Slow Job")

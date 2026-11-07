@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -9,6 +10,18 @@ import xml.etree.ElementTree as ET
 from unittest.mock import patch, MagicMock
 
 from tuxutil import winiso
+
+
+class TestValidateIso(unittest.TestCase):
+    def test_validate_iso_passes_in_dry_run(self):
+        """--dry-run must not stub out the read-only 7z probe: a real ISO still validates."""
+        with tempfile.NamedTemporaryFile(suffix=".iso") as iso:
+            listing = subprocess.CompletedProcess([], 0, "sources/install.wim\n", "")
+            with patch.object(winiso.system, "DRY_RUN", True), \
+                    patch.object(winiso.system, "query", return_value=listing) as query:
+                winiso._validate_iso(iso.name)  # must not raise
+            self.assertEqual(query.call_args.args[0][0], "7z")
+            self.assertIn("sources/install.wim", query.call_args.args[0])
 
 
 class TestXmlEscape(unittest.TestCase):

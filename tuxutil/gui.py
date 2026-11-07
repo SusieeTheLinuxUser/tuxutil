@@ -962,7 +962,13 @@ if HAS_PYSIDE6:
         def on_edition_selected(self):
             items = self.editions_tree.selectedItems()
             if items and self.dynamic_form and "--edition" in self.dynamic_form.fields:
-                self.dynamic_form.fields["--edition"][1].setText(items[0].text(0))
+                widget = self.dynamic_form.fields["--edition"][1]
+                text = items[0].text(0)
+                # The schema types --edition as "str" or "choice", so the widget varies.
+                if isinstance(widget, QComboBox):
+                    widget.setCurrentText(text)
+                else:
+                    widget.setText(text)
 
         def on_iso_path_changed(self):
             path = self.iso_path_edit.text().strip()
@@ -1317,9 +1323,9 @@ if HAS_PYSIDE6:
             self.device_combo.currentIndexChanged.connect(self.on_device_selection_changed)
             row.addWidget(self.device_combo, 1)
 
-            btn_refresh = QPushButton("Refresh Devices")
-            btn_refresh.clicked.connect(self.load_flash_devices)
-            row.addWidget(btn_refresh)
+            self.btn_refresh_devices = QPushButton("Refresh Devices")
+            self.btn_refresh_devices.clicked.connect(self.load_flash_devices)
+            row.addWidget(self.btn_refresh_devices)
             d_layout.addLayout(row)
 
             self.lbl_selected_device = QLabel("No device selected.")
@@ -1453,20 +1459,22 @@ if HAS_PYSIDE6:
             idx = self.device_combo.currentIndex()
             if idx < 0 or idx >= len(self.raw_devices):
                 self.btn_flash_write.setEnabled(False)
-                return
+                return False
 
             dev = self.raw_devices[idx]
             if not dev.get("safe", False):
                 self.btn_flash_write.setEnabled(False)
-                return
+                return False
 
             expected_path = dev.get("path", "").strip()
             typed = self.confirm_input.text().strip()
 
             # Hard rule: Flash button MUST stay disabled until an ISO exists on disk,
-            # a safe device is selected, and the exact path is typed.
-            can_flash = bool(iso_valid and typed and (typed == expected_path))
+            # a safe device is selected, the exact path is typed, and no job is running.
+            can_flash = bool(iso_valid and typed and (typed == expected_path)
+                             and self.active_process is None)
             self.btn_flash_write.setEnabled(can_flash)
+            return can_flash
 
         def on_flash_write(self):
             idx = self.device_combo.currentIndex()
@@ -1750,7 +1758,10 @@ if HAS_PYSIDE6:
             self.tab_linuxiso.btn_download.setEnabled(enabled)
             self.tab_winiso.btn_build.setEnabled(enabled)
             self.tab_linuxiso.btn_build.setEnabled(enabled and (self.tab_linuxiso.lbl_supported.text() == "Supported"))
-            self.validate_flash_confirm()
+            self.btn_refresh_devices.setEnabled(enabled)
+            # validate_flash_confirm re-checks active_process, so the flash button
+            # comes back only after a job ends (active_process is None by then).
+            self.btn_flash_write.setEnabled(enabled and self.validate_flash_confirm())
 
 
 def register(sub):

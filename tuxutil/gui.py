@@ -89,7 +89,8 @@ def mask_command_for_log(cmd):
                 netloc=url.netloc.rsplit("@", 1)[-1], query="******" if url.query else "", fragment="",
             ).geturl())
             continue
-        if any(kw in lower for kw in ("password", "secret", "token")):
+        # Only flags can take a secret value; a path that merely contains "secret" is not one.
+        if arg_str.startswith("-") and any(kw in lower for kw in ("password", "secret", "token")):
             if "=" in arg_str:
                 flag, _ = arg_str.split("=", 1)
                 masked.append(f"{flag}=******")
@@ -713,7 +714,7 @@ if HAS_PYSIDE6:
             outer.addWidget(scroll, 1)
 
             self.banner = ErrorBanner()
-            self.banner.retry_requested.connect(self.on_refresh_info)
+            self.banner.retry_requested.connect(self.on_retry)
             layout.addWidget(self.banner)
 
             # Source ISO Picker
@@ -983,8 +984,19 @@ if HAS_PYSIDE6:
                 self.lbl_supported.setText("—")
                 set_tone(self.lbl_supported, "")
                 self.btn_build.setEnabled(False)
+            # A new ISO must not build with the previous ISO's picked edition.
+            if self.flavor == "winiso" and self.dynamic_form and "--edition" in self.dynamic_form.fields:
+                w = self.dynamic_form.fields["--edition"][1]
+                if isinstance(w, QLineEdit):  # the real CLI declares it as str
+                    w.setText("")
             if path and (Path(path).is_file() or os.environ.get("TUXUTIL_CLI")):
                 self.on_refresh_info()
+
+        def on_retry(self):
+            # The banner also reports options failures, which on_refresh_info alone cannot recover.
+            if self.dynamic_form is None:
+                self.load_options()
+            self.on_refresh_info()
 
         def on_refresh_info(self):
             path = self.iso_path_edit.text().strip()

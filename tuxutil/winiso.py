@@ -945,10 +945,10 @@ def build_iso(iso_path: str, output_path: str, opts: BuildOptions, work_dir: Opt
     parent = os.path.dirname(output_path)
     os.makedirs(parent, exist_ok=True)
     work_dir = _own_work_dir(work_dir, output_path)
-    _check_disk_space(work_dir, iso_path)
     extract_dir = os.path.join(work_dir, "extract")
 
     try:
+        _check_disk_space(work_dir, iso_path)
         _do_build(iso_path, output_path, opts, work_dir, extract_dir)
     except BaseException:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -1058,8 +1058,8 @@ def _do_build(iso_path, output_path, opts, work_dir, extract_dir):
 
 def _flat(values):
     """Flatten repeated flags, each of which may itself be comma-separated."""
-    parts = [part for value in values or [] for part in str(value).split(",") if part]
-    return parts or None
+    parts = [part.strip() for value in values or [] for part in str(value).split(",")]
+    return [part for part in parts if part] or None
 
 
 def options_from_args(args) -> BuildOptions:
@@ -1132,9 +1132,14 @@ def _option_table():
 
 
 def cmd_info(args):
-    system.require_tools(["7z", "wimlib-imagex"])
-    _validate_iso(args.iso)
-    editions = _get_editions(args.iso)
+    # info only reads the ISO, so dry-run must still inspect it for real.
+    dry_run, system.DRY_RUN = system.DRY_RUN, False
+    try:
+        system.require_tools(["7z", "wimlib-imagex"])
+        _validate_iso(args.iso)
+        editions = _get_editions(args.iso)
+    finally:
+        system.DRY_RUN = dry_run
     data = {
         "editions": [
             {"index": e.index, "name": e.name, "arch": e.arch,

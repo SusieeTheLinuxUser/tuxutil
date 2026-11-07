@@ -54,7 +54,7 @@ Agents run on the owner's daily PC, often unattended.
 
 ## Git workflow
 - `main`: stable. `dev`: integration. Never push to either directly (a local pre-push hook blocks it; GitHub protection isn't available while the repo is private on the Free plan).
-- Work on `feat/<name>` or `fix/<name>`, open a PR into `dev`. Don't merge; the orchestrator reviews and merges. Squash merges only, so one PR is one revertable commit.
+- Work on `feat/<name>` or `fix/<name>` branched from `origin/dev` (not `main`: squash releases mean the two share no history, so a `main`-based branch can't rebase onto `dev`; cherry-pick instead), open a PR into `dev`. Don't merge; the orchestrator reviews and merges. Squash merges only, so one PR is one revertable commit.
 - Never force-push a branch you don't own. Never commit ISOs, disk images, or secrets.
 - To undo a merged change: `git revert <sha>` in a new PR. Every merge to `main` gets a `v0.x.y` tag as a known-good restore point.
 

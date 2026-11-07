@@ -265,6 +265,64 @@ class WriteGuardTest(unittest.TestCase):
         os.environ.update(self._env)
         system.DRY_RUN = self._dry
 
+    def test_a_stick_swapped_on_the_same_path_is_refused(self):
+        # Picked stick A at /dev/sdb, then B was plugged in and got /dev/sdb.
+        picked = flash.list_disks(*snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="A"), serial="1")])[:2],
+                                  {"filesystems": []}, "")[0]["id"]
+        swapped = snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="B"), serial="2")])
+        real_stat = os.stat
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp, "x.iso")
+            iso.write_bytes(b"x" * 1024)
+            fake = lambda p, *a, **k: os.stat_result((stat.S_IFBLK,) + (0,) * 9) if p == "/dev/sdb" else real_stat(p, *a, **k)
+            with mock.patch.object(flash, "canon", side_effect=lambda p: p), mock.patch.object(flash.os, "stat", side_effect=fake):
+                with self.assertRaises(SystemExit) as caught:
+                    flash.prepare(str(iso), "/dev/sdb", "/dev/sdb", snapshot=swapped, expect_id=picked)
+                self.assertIn("no longer the disk you picked", str(caught.exception))
+                # The same stick still passes.
+                same = snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="A"), serial="1")])
+                self.assertEqual(flash.prepare(str(iso), "/dev/sdb", "/dev/sdb", snapshot=same, expect_id=picked)["device"], "/dev/sdb")
+
+    def test_disk_id_tells_sticks_apart(self):
+        ident = lambda model, serial, size=500: flash.disk_id({"size": size, "model": model, "serial": serial})
+        self.assertEqual(ident("A", "1"), ident(" A ", "1 "))  # whitespace from lsblk is trimmed
+        self.assertNotEqual(ident("A", ""), ident("A", "123"))  # a missing serial is not a wildcard
+        self.assertNotEqual(ident("A", "1"), ident("A", "1", size=16))
+        # Colons in a model or serial are escaped, so they can't shift the fields.
+        self.assertNotEqual(ident("A:B", ""), ident("A", "B:"))
+
+    def test_a_swap_during_unmount_is_refused_by_the_recheck(self):
+        stick = lambda model, serial: snap([dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model=model), serial=serial)])
+        picked = flash.disk_id(dict(disk("sdb", "/dev/sdb", 8 << 30, "usb", True, model="A"), serial="1"))
+        real_stat = os.stat
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp, "x.iso")
+            iso.write_bytes(b"x" * 1024)
+            fake = lambda p, *a, **k: os.stat_result((stat.S_IFBLK,) + (0,) * 9) if p == "/dev/sdb" else real_stat(p, *a, **k)
+            with mock.patch.object(flash, "canon", side_effect=lambda p: p), \
+                    mock.patch.object(flash.os, "stat", side_effect=fake), \
+                    mock.patch.object(flash, "load_snapshot", side_effect=[stick("A", "1"), stick("B", "2")]), \
+                    mock.patch.object(flash, "unmount_target") as unmount:
+                with self.assertRaises(SystemExit) as caught:
+                    flash.prepare_for_write(str(iso), "/dev/sdb", "/dev/sdb", picked)
+            unmount.assert_called_once()  # the first check passed; the one after unmount refused
+            self.assertIn("no longer the disk you picked", str(caught.exception))
+
+    def test_cmd_write_hands_the_picked_disk_to_the_root_side(self):
+        args = argparse_ns("x.iso", "/dev/sdb", "/dev/sdb")
+        args.expect_id = "8:A:1"
+        with mock.patch.object(flash, "test_mode", return_value=False), \
+                mock.patch.object(flash, "prepare"), \
+                mock.patch.object(system, "as_root", side_effect=lambda argv: argv), \
+                mock.patch.object(system, "run") as run:
+            flash.cmd_write(args)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--expect-id") + 1], "8:A:1")
+
+    def test_root_argv_passes_the_picked_disk(self):
+        argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", expect_id="8:A:1")
+        self.assertEqual(argv[-2:], ["--expect-id", "8:A:1"])
+
     def test_confirm_must_match_exactly(self):
         with self.assertRaises(SystemExit) as caught:
             flash.prepare("missing.iso", "/dev/sdb", "/dev/sdc")
@@ -545,7 +603,8 @@ class FatCopyTest(unittest.TestCase):
 
 
 def argparse_ns(iso, device, confirm, no_verify=False, json=False):
-    return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json, cancel_on_eof=False)
+    return mock.Mock(iso=iso, device=device, confirm=confirm, no_verify=no_verify, json=json, cancel_on_eof=False,
+                     expect_id=None)
 
 
 class HybridBootTest(unittest.TestCase):

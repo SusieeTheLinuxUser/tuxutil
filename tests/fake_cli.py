@@ -27,6 +27,12 @@ def main():
                 "name": "Arch Linux",
                 "family": "arch",
                 "missing": ["xorriso", "wimlib-imagex"],
+                "tuxutil": {
+                    "version": "0.2.3",
+                    "latest": "0.2.4",
+                    "update_available": True,
+                    "update_url": "https://example.test/tuxutil/releases/latest",
+                },
             }
             print(json.dumps(data))
             return 0

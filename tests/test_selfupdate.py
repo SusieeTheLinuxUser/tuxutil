@@ -1,6 +1,7 @@
 import io
 import re
 import unittest
+import urllib.error
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,26 @@ class LocationTest(unittest.TestCase):
     def test_redirect_is_not_followed(self):
         # urllib calls this with 7 arguments; a wrong signature made every real check fail.
         self.assertIsNone(selfupdate.NoRedirect().redirect_request(None, None, 302, "Found", {}, "https://x"))
+
+    def test_latest_version_reads_the_302_it_stops_at(self):
+        # The whole request path, no network: a HEAD, redirects off, and the 302 that urllib then
+        # raises as HTTPError carries the tag.
+        tag_url = "https://github.com/SusieeTheLinuxUser/tuxutil/releases/tag/v0.2.4"
+        found = urllib.error.HTTPError(selfupdate.RELEASES_URL, 302, "Found", {"Location": tag_url}, io.BytesIO())
+        opener = mock.Mock()
+        opener.open.side_effect = found
+        with mock.patch.object(selfupdate.urllib.request, "build_opener", return_value=opener) as build:
+            self.assertEqual(selfupdate.latest_version(), (0, 2, 4))
+        build.assert_called_once_with(selfupdate.NoRedirect)
+        request = opener.open.call_args.args[0]
+        self.assertEqual((request.full_url, request.get_method()), (selfupdate.RELEASES_URL, "HEAD"))
+        self.assertTrue(found.fp.closed)
+
+    def test_latest_version_is_none_when_offline(self):
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.URLError("offline")
+        with mock.patch.object(selfupdate.urllib.request, "build_opener", return_value=opener):
+            self.assertIsNone(selfupdate.latest_version())
 
     def test_tag_from_redirect(self):
         url = "https://github.com/SusieeTheLinuxUser/tuxutil/releases/tag/v0.2.4"

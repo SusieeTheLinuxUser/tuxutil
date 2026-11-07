@@ -1382,6 +1382,9 @@ if HAS_PYSIDE6:
             self.confirm_input.clear()
 
             def on_done(exit_code, stdout, stderr):
+                # stale refresh: the flash owns the window, the list reloads on the next refresh
+                if self.active_process is not None and self.active_job_is_flash:
+                    return
                 if exit_code != 0:
                     self.flash_banner.show_error(
                         "Flash Device Enumeration Failed",

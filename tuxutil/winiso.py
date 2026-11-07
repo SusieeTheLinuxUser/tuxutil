@@ -316,7 +316,8 @@ def _validate_iso(iso_path: str):
     result = system.query(["7z", "l", iso_path, "sources/install.wim", "sources/install.esd"],
                           timeout=120)
     if result.returncode != 0:
-        raise SystemExit(f"Cannot read ISO: {iso_path}")
+        detail = f"\n{result.stderr.strip()}" if result.stderr and result.stderr.strip() else ""
+        raise SystemExit(f"Cannot read ISO: {iso_path}{detail}")
     listing = (result.stdout or "").lower()
     if "install.wim" not in listing and "install.esd" not in listing:
         raise SystemExit(

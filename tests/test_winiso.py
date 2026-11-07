@@ -23,6 +23,15 @@ class TestValidateIso(unittest.TestCase):
             self.assertEqual(query.call_args.args[0][0], "7z")
             self.assertIn("sources/install.wim", query.call_args.args[0])
 
+    def test_a_failed_listing_names_the_7z_error(self):
+        with tempfile.NamedTemporaryFile(suffix=".iso") as iso:
+            failed = subprocess.CompletedProcess([], 2, "", "E_FAIL boom")
+            with patch.object(winiso.system, "query", return_value=failed):
+                with self.assertRaises(SystemExit) as ctx:
+                    winiso._validate_iso(iso.name)
+            self.assertIn("boom", str(ctx.exception))
+            self.assertIn(iso.name, str(ctx.exception))
+
 
 class TestXmlEscape(unittest.TestCase):
     """Test XML escaping for autounattend.xml generation."""

@@ -456,6 +456,26 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertTrue(self.win.btn_flash_write.isEnabled())
         self.assertTrue(self.win.btn_refresh_devices.isEnabled())
 
+    def test_a_refresh_during_a_flash_does_not_touch_the_device_list(self):
+        self.win.tabs.setCurrentIndex(6)
+        self.assertTrue(wait_until(lambda: len(self.win.raw_devices) > 0))
+        before_devices = self.win.raw_devices
+        before_texts = [self.win.device_combo.itemText(i) for i in range(self.win.device_combo.count())]
+
+        self.win.active_process = object()  # a dummy; only None-ness matters
+        self.win.active_job_is_flash = True
+        try:
+            self.win.load_flash_devices()
+            # The fake CLI answers; the stale refresh must not have replaced anything.
+            self.assertTrue(wait_until(lambda: not self.win._active_queries))
+            pump_events(50)
+            self.assertIs(self.win.raw_devices, before_devices)
+            after_texts = [self.win.device_combo.itemText(i) for i in range(self.win.device_combo.count())]
+            self.assertEqual(after_texts, before_texts)
+        finally:
+            self.win.active_process = None
+            self.win.active_job_is_flash = False
+
     def test_long_job_progress_and_cancel(self):
         self.win.run_cli_job(["test-long", "0.05"], "Slow Job")
         pump_events(80)

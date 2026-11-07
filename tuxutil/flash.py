@@ -32,7 +32,7 @@ FAT32_MAX_FILE = 2**32 - 1
 PROTECTED = ("/", "/boot", "/home", "/usr", "/var")
 DATA_MOUNTS = ("/media", "/run/media", "/mnt")
 INSTALL_NAMES = {"install.wim", "install.esd", "install.swm"}
-LSBLK_COLS = "NAME,PATH,PKNAME,TYPE,SIZE,TRAN,RM,MODEL,FSTYPE,MOUNTPOINTS"
+LSBLK_COLS = "NAME,PATH,PKNAME,TYPE,SIZE,TRAN,RM,MODEL,SERIAL,FSTYPE,MOUNTPOINTS"
 
 
 def refuse(message):
@@ -298,6 +298,23 @@ def disk_reason(node, labels):
     return ""
 
 
+def disk_id(node):
+    """Which physical disk this is, as far as lsblk can tell: a path like /dev/sdb is reused by the next stick plugged in."""
+    try:
+        size = int(node.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    return f"{size}:{str(node.get('model') or '').strip()}:{str(node.get('serial') or '').strip()}"
+
+
+def same_disk(a, b):
+    """Size and model must match; the serial only when both sides could read one (lsblk as root can see more)."""
+    # rsplit: a model name may itself hold a colon.
+    disk_a, _, serial_a = a.rpartition(":")
+    disk_b, _, serial_b = b.rpartition(":")
+    return disk_a == disk_b and (not serial_a or not serial_b or serial_a == serial_b)
+
+
 def list_disks(normal, inverse, findmnt_doc, swaps_text):
     devices, parents = build_topology(normal, inverse)
     mounts = mounts_by_disk(devices, parents, findmnt_doc, swaps_text)
@@ -321,6 +338,7 @@ def list_disks(normal, inverse, findmnt_doc, swaps_text):
             size = 0
         rows.append({
             "path": path,
+            "id": disk_id(merged),
             "model": str(merged.get("model") or "").strip(),
             "size_bytes": size,
             "transport": transport,
@@ -368,8 +386,12 @@ def test_mode():
     return os.environ.get(TEST_ENV) == "1"
 
 
-def prepare(iso, device, confirm, snapshot=None):
-    """Every safety check, except the final unmount. Raises SystemExit."""
+def prepare(iso, device, confirm, snapshot=None, expect_id=None):
+    """Every safety check, except the final unmount. Raises SystemExit.
+
+    expect_id: the disk_id the user picked from the list. Without it, a stick swapped
+    for another one on the same path between pick and write would be written to.
+    """
     require_confirm(device, confirm)
     if test_mode() and (is_under_dev(device) or is_under_dev(canon(device))):
         # The test-file switch never opens /dev, even if a check below would
@@ -390,6 +412,10 @@ def prepare(iso, device, confirm, snapshot=None):
         reason = reason_for(real, *snapshot, iso=iso_real)
         if reason:
             refuse(f"{real}: {reason}")
+        if expect_id is not None:
+            node = node_for(real, build_topology(snapshot[0], snapshot[1])[0])
+            if node is None or not same_disk(disk_id(node), expect_id):
+                refuse(f"{real} is no longer the disk you picked (was it swapped?); refresh the list and pick again")
         size = _block_size(real, snapshot)
     elif test_mode() and stat.S_ISREG(st.st_mode):
         if is_under_dev(real) or not is_under_work(real):
@@ -477,15 +503,15 @@ def unmount_target(device):
             refuse(f"{mount.get('target')} is still mounted on {device}")
 
 
-def prepare_for_write(iso, device, confirm):
+def prepare_for_write(iso, device, confirm, expect_id=None):
     """Check, unmount, then check again immediately before any write."""
-    plan = prepare(iso, device, confirm)
+    plan = prepare(iso, device, confirm, expect_id=expect_id)
     if plan["block"]:
         unmount_target(plan["device"])
-    return prepare(iso, device, confirm)
+    return prepare(iso, device, confirm, expect_id=expect_id)
 
 
-def root_argv(iso, device, confirm, no_verify=False, cancel_on_eof=False):
+def root_argv(iso, device, confirm, no_verify=False, cancel_on_eof=False, expect_id=None):
     """Argv of the root-side writer.
 
     The test-file switch is intentionally not passed: the root process must not enter it.
@@ -497,6 +523,8 @@ def root_argv(iso, device, confirm, no_verify=False, cancel_on_eof=False):
         argv.append("--no-verify")
     if cancel_on_eof:
         argv.append("--cancel-on-eof")
+    if expect_id is not None:
+        argv += ["--expect-id", expect_id]
     return argv
 
 
@@ -841,7 +869,7 @@ def extracted_root(dest):
     return dest
 
 
-def write_windows(iso, device, confirm, verify=True):
+def write_windows(iso, device, confirm, verify=True, expect_id=None):
     system.require_tools(["7z", "sfdisk", "mkfs.vfat", "mcopy", "wimlib-imagex"])
     work = make_scratch()
     try:
@@ -853,7 +881,7 @@ def write_windows(iso, device, confirm, verify=True):
         system.progress(30, "preparing install images")
         split_oversized_wims(root)
         # Extract can take a long time. Unmount and check again before touching the disk.
-        plan = prepare_for_write(iso, device, confirm)
+        plan = prepare_for_write(iso, device, confirm, expect_id)
         payload = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
         # ponytail: 5% is a rough allowance for FAT tables and cluster slack.
         if payload > plan["size"] * 0.95:
@@ -895,8 +923,8 @@ def cmd_write(args):
     if test_mode():
         return cmd_write_root(args)
     # Fail closed before the root prompt when the target is obviously wrong.
-    prepare(args.iso, args.device, args.confirm)
-    system.run(system.as_root(root_argv(args.iso, args.device, args.confirm, args.no_verify, args.cancel_on_eof)))
+    prepare(args.iso, args.device, args.confirm, expect_id=args.expect_id)
+    system.run(system.as_root(root_argv(args.iso, args.device, args.confirm, args.no_verify, args.cancel_on_eof, args.expect_id)))
     return 0
 
 
@@ -945,7 +973,7 @@ def cancel_on_stdin_eof():
 
 
 def cmd_write_root(args):
-    plan = prepare(args.iso, args.device, args.confirm)
+    plan = prepare(args.iso, args.device, args.confirm, expect_id=args.expect_id)
     if system.DRY_RUN:
         print(f"flash: dry-run; not unmounting or writing {plan['device']}", flush=True)
         return 0
@@ -957,9 +985,9 @@ def cmd_write_root(args):
     try:
         mode, _files = detect_mode(plan["iso"])
         if mode == "windows":
-            write_windows(args.iso, args.device, args.confirm, verify=not args.no_verify)
+            write_windows(args.iso, args.device, args.confirm, verify=not args.no_verify, expect_id=args.expect_id)
         else:
-            plan = prepare_for_write(args.iso, args.device, args.confirm)
+            plan = prepare_for_write(args.iso, args.device, args.confirm, args.expect_id)
             write_raw(plan["iso"], plan["device"], plan["block"], verify=not args.no_verify)
     except subprocess.CalledProcessError as err:
         refuse(f"command failed ({err.returncode}): {shlex.join(str(part) for part in err.cmd)}")
@@ -983,6 +1011,7 @@ def register(sub):
     write.add_argument("--confirm", required=True, help="must exactly equal DEVICE")
     write.add_argument("--no-verify", action="store_true", help="skip the read-back check")
     write.add_argument("--cancel-on-eof", action="store_true", help=argparse.SUPPRESS)
+    write.add_argument("--expect-id", help="refuse unless DEVICE is still this disk (the id from `flash list --json`)")
     write.set_defaults(func=cmd_write)
 
     internal = commands.add_parser("_write", help=argparse.SUPPRESS)
@@ -991,4 +1020,5 @@ def register(sub):
     internal.add_argument("--confirm", required=True)
     internal.add_argument("--no-verify", action="store_true")
     internal.add_argument("--cancel-on-eof", action="store_true")
+    internal.add_argument("--expect-id")
     internal.set_defaults(func=cmd_write_root)

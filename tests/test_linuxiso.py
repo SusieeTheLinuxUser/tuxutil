@@ -372,6 +372,16 @@ class IdentityHostsTest(unittest.TestCase):
         linuxiso._apply_identity(root, SimpleNamespace(overlay=None, hostname="mint", first_boot=None))
         self.assertEqual(hosts.read_text(), "127.0.0.1\tlocalhost\n127.0.1.10 printer.lan\n127.0.1.1\tmint\n")
 
+    def test_a_loopback_line_with_only_the_hostname_is_dropped(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "root"
+        (root / "etc").mkdir(parents=True)
+        hosts = root / "etc/hosts"
+        hosts.write_text("127.0.0.1\tmint\n::1\tlocalhost\n")
+        linuxiso._apply_identity(root, SimpleNamespace(overlay=None, hostname="mint", first_boot=None))
+        self.assertEqual(hosts.read_text(), "::1\tlocalhost\n127.0.1.1\tmint\n")
+
     def test_hostname_localhost_keeps_the_loopback_line(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

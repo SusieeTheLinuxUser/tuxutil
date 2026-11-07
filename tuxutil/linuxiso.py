@@ -1023,10 +1023,11 @@ def _apply_identity(root, args):
                 if fields[:1] == ["127.0.1.1"]:
                     rows.append(f"127.0.1.1\t{args.hostname}")
                     replaced = True
-                elif (fields[:1] == ["127.0.0.1"] and args.hostname != "localhost"
-                      and args.hostname in fields[1:] and len(fields) > 2):
-                    # Left on the localhost line, the hostname would resolve to "localhost".
-                    rows.append("\t".join([fields[0], " ".join(f for f in fields[1:] if f != args.hostname)]))
+                elif fields[:1] == ["127.0.0.1"] and args.hostname != "localhost" and args.hostname in fields[1:]:
+                    # Left on the loopback line, the hostname would resolve there, not to 127.0.1.1.
+                    names = [f for f in fields[1:] if f != args.hostname]
+                    if names:
+                        rows.append("\t".join([fields[0], " ".join(names)]))
                 else:
                     rows.append(line)
             if not replaced:

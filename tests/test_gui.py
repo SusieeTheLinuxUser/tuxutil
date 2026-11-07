@@ -272,6 +272,11 @@ class TestTuxUtilGui(unittest.TestCase):
         self.assertEqual(self.win.tools_list.count(), 2)
         self.assertTrue(self.win.btn_install_missing.isEnabled())
 
+    def test_doctor_tab_shows_the_update_label(self):
+        self.assertTrue(wait_until(lambda: self.win.lbl_update.isVisible()))
+        self.assertIn("tuxutil 0.2.4 is out", self.win.lbl_update.text())
+        self.assertIn("https://example.test/tuxutil/releases/latest", self.win.lbl_update.text())
+
     def test_apps_tab(self):
         self.win.tabs.setCurrentIndex(1)
         self.assertTrue(wait_until(lambda: self.win.tab_apps.tree.topLevelItemCount() > 0))

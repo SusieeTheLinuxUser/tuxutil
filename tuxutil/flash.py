@@ -304,15 +304,17 @@ def disk_id(node):
         size = int(node.get("size") or 0)
     except (TypeError, ValueError):
         size = 0
-    return f"{size}:{str(node.get('model') or '').strip()}:{str(node.get('serial') or '').strip()}"
+    # Escaped, so a colon inside a model or serial can't shift where the id splits.
+    model, serial = (str(node.get(k) or "").strip().replace("%", "%25").replace(":", "%3A") for k in ("model", "serial"))
+    return f"{size}:{model}:{serial}"
 
 
 def same_disk(a, b):
     """Size and model must match; the serial only when both sides could read one (lsblk as root can see more)."""
-    # rsplit: a model name may itself hold a colon.
-    disk_a, _, serial_a = a.rpartition(":")
-    disk_b, _, serial_b = b.rpartition(":")
-    return disk_a == disk_b and (not serial_a or not serial_b or serial_a == serial_b)
+    parts_a, parts_b = a.split(":"), b.split(":")
+    if len(parts_a) != 3 or len(parts_b) != 3:
+        return False  # not an id this version wrote: refuse rather than guess
+    return parts_a[:2] == parts_b[:2] and (not parts_a[2] or not parts_b[2] or parts_a[2] == parts_b[2])
 
 
 def list_disks(normal, inverse, findmnt_doc, swaps_text):

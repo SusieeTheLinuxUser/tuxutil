@@ -288,6 +288,13 @@ class WriteGuardTest(unittest.TestCase):
         self.assertFalse(flash.same_disk("8:A:1", "8:A:2"))
         self.assertFalse(flash.same_disk("8:A:", "8:B:"))
         self.assertFalse(flash.same_disk("8:A:", "16:A:"))
+        # Colons in a model or serial are escaped, so they can't shift the split.
+        a_b = flash.disk_id({"size": 500, "model": "A:B", "serial": ""})
+        a_bc = flash.disk_id({"size": 500, "model": "A", "serial": "B:C"})
+        self.assertFalse(flash.same_disk(a_b, a_bc))
+        self.assertTrue(flash.same_disk(flash.disk_id({"size": 500, "model": "M", "serial": ""}),
+                                        flash.disk_id({"size": 500, "model": "M", "serial": "AB:CD"})))
+        self.assertFalse(flash.same_disk("garbage", "garbage"))
 
     def test_root_argv_passes_the_picked_disk(self):
         argv = flash.root_argv("/tmp/x.iso", "/dev/sdb", "/dev/sdb", expect_id="8:A:1")

@@ -693,14 +693,15 @@ class TestInfoUnderDryRun(unittest.TestCase):
             with patch.object(system, "require_tools"), \
                     patch.object(winiso, "_validate_iso",
                                  side_effect=lambda *a, **k: seen.append(system.DRY_RUN)), \
-                    patch.object(winiso, "_get_editions", return_value=[]), \
+                    patch.object(winiso, "_get_editions",
+                                 side_effect=lambda *a, **k: seen.append(system.DRY_RUN) or []), \
                     patch("sys.stdout", new_callable=io.StringIO):
                 rc = winiso.cmd_info(argparse.Namespace(iso="in.iso", json=True))
             self.assertEqual(rc, 0)
             self.assertTrue(system.DRY_RUN)  # restored for any later in-process caller
         finally:
             system.DRY_RUN = False
-        self.assertEqual(seen, [False])
+        self.assertEqual(seen, [False, False])
 
 
 if __name__ == "__main__":

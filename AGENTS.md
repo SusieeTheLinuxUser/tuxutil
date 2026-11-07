@@ -21,7 +21,7 @@ tuxutil winiso build ISO -o OUT.iso [options]
 tuxutil linuxiso info ISO --json
 tuxutil linuxiso build ISO -o OUT.iso [options]
 tuxutil flash list --json
-tuxutil flash write ISO DEVICE --confirm DEVICE [--no-verify]
+tuxutil flash write ISO DEVICE --confirm DEVICE [--no-verify] [--expect-id ID]
 tuxutil iso list --json
 tuxutil iso download [TARGET] [-o FILE | --dir DIR] [--sha256 HEX]    (no TARGET: reads $TUXUTIL_DOWNLOAD_URL)
 tuxutil gui
@@ -32,7 +32,8 @@ apps list:     [{"id","name","category","description","installed":bool,"availabl
 tweaks list:   [{"id","name","category","description","risk":"low|medium|high","applied":bool|null,"available":bool}]
 winiso info:   {"editions":[{"index":int,"name","arch","size_bytes":int,"build"}]}
 linuxiso info: {"family","squashfs","label","arch","supported":bool,"notes"}
-flash list:    [{"path","model","size_bytes":int,"transport","removable":bool,"safe":bool,"reason"}]
+flash list:    [{"path","id","model","size_bytes":int,"transport","removable":bool,"safe":bool,"reason"}]
+               id = "size:model:serial". Pass it as --expect-id (the GUI does) so a stick swapped onto the same /dev path is refused.
 iso list:      [{"id","name","kind":"linux|windows","direct":bool,"page","notes"}]
 winiso options --json, linuxiso options --json:
                [{"flag":"--name","type":"bool|str|path|list|choice","label","help","default","choices":[...]}]

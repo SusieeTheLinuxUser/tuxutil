@@ -164,7 +164,7 @@ class DryRunTest(unittest.TestCase):
         assert_flatpak_unprivileged(self, out)
 
     def test_remove_flatpak_is_per_user(self):
-        with as_family("arch"), mock.patch.object(apps, "installed_names", return_value=(set(), set())):
+        with as_family("arch"), mock.patch.object(apps, "installed_names", return_value=(set(), {"com.spotify.Client"})):
             rc, out, _ = invoke(["--dry-run", "apps", "remove", "spotify"])
         self.assertEqual(rc, 0)
         self.assertEqual(commands(out), [["flatpak", "uninstall", "-y", "com.spotify.Client"]])
@@ -300,10 +300,15 @@ class RemovePlanTest(unittest.TestCase):
             (({"firefox"}, set()), (["firefox"], [])),
             ((set(), {"org.mozilla.firefox"}), ([], ["org.mozilla.firefox"])),
             (({"firefox"}, {"org.mozilla.firefox"}), (["firefox"], ["org.mozilla.firefox"])),
-            ((set(), set()), (["firefox"], [])),
+            ((set(), set()), ([], [])),
         ):
             native, flatpaks, _ = apps.plan([self.APP], self.DISTRO, installed)
             self.assertEqual((native, flatpaks), want, installed)
+
+    def test_nothing_installed_plans_nothing(self):
+        # Removing an app that is not installed must plan no packages, not all of them.
+        native, flatpaks, unavailable = apps.plan([self.APP], self.DISTRO, (set(), set()))
+        self.assertEqual((native, flatpaks, unavailable), ([], [], []))
 
 
 class InstalledNamesTest(unittest.TestCase):

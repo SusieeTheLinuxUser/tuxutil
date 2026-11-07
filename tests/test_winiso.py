@@ -1,5 +1,6 @@
 """Tests for tuxutil.winiso — unit tests that run in CI with no root, ISOs, or network."""
 
+import io
 import json
 import os
 import subprocess
@@ -659,6 +660,46 @@ class TestValidation(unittest.TestCase):
                 f.write(b"x" * 1024)
             # Should not raise (plenty of space for a 1KB file)
             winiso._check_disk_space(d, fake)
+
+    def test_disk_space_failure_cleans_work_dir(self):
+        """A failing disk-space check must not leave an empty work dir behind."""
+        from tuxutil import system
+        with tempfile.TemporaryDirectory() as d:
+            iso = os.path.join(d, "in.iso")
+            open(iso, "wb").close()
+            out = os.path.join(d, "out.iso")
+            with patch.object(winiso, "_check_disk_space", side_effect=SystemExit(1)), \
+                    patch.object(system, "require_tools"), \
+                    patch.object(winiso, "_validate_iso"):
+                with self.assertRaises(SystemExit):
+                    winiso.build_iso(iso, out, winiso.BuildOptions())
+            leftovers = [n for n in os.listdir(d) if n.startswith("tuxutil-winiso-")]
+            self.assertEqual(leftovers, [])
+
+    def test_flat_strips_and_drops_empty_parts(self):
+        self.assertEqual(winiso._flat(["a, b", " c ,"]), ["a", "b", "c"])
+        self.assertIsNone(winiso._flat([""]))
+
+
+class TestInfoUnderDryRun(unittest.TestCase):
+    """`winiso info` reads the ISO, so it must inspect it even under --dry-run."""
+
+    def test_info_disables_dry_run_before_inspecting(self):
+        import argparse
+        from tuxutil import system
+        seen = []
+        try:
+            system.DRY_RUN = True
+            with patch.object(system, "require_tools"), \
+                    patch.object(winiso, "_validate_iso",
+                                 side_effect=lambda *a, **k: seen.append(system.DRY_RUN)), \
+                    patch.object(winiso, "_get_editions", return_value=[]), \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                rc = winiso.cmd_info(argparse.Namespace(iso="in.iso", json=True))
+            self.assertEqual(rc, 0)
+        finally:
+            system.DRY_RUN = False
+        self.assertEqual(seen, [False])
 
 
 if __name__ == "__main__":

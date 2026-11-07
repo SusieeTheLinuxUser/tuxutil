@@ -361,5 +361,20 @@ class ImageSymlinkTest(unittest.TestCase):
         self.assertEqual(self.victim.read_text(), "linux /vmlinuz quiet\n")
 
 
+class IdentityHostsTest(unittest.TestCase):
+    def test_hosts_rewrites_only_matching_ip(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "root"
+        (root / "etc").mkdir(parents=True)
+        hosts = root / "etc/hosts"
+        hosts.write_text("127.0.0.1\tlocalhost mint\n127.0.1.10 printer.lan\n127.0.1.1\told\n")
+        linuxiso._apply_identity(root, SimpleNamespace(overlay=None, hostname="mint", first_boot=None))
+        self.assertEqual(hosts.read_text(), "127.0.0.1\tlocalhost mint\n127.0.1.10 printer.lan\n127.0.1.1\tmint\n")
+
+    def test_guess_arch_arm64(self):
+        self.assertEqual(linuxiso.guess_arch(["/EFI/boot/bootaa64.efi", "/casper/vmlinuz"]), "aarch64")
+
+
 if __name__ == "__main__":
     unittest.main()

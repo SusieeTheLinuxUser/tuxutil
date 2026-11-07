@@ -33,6 +33,11 @@ class DetectTest(unittest.TestCase):
         ]:
             self.assertEqual(distro_from(text).family, family, text)
 
+    def test_unbalanced_quote_is_skipped(self):
+        # A broken os-release line must not take down every command.
+        got = system.parse_os_release('ID=arch\nPRETTY_NAME="Foo\n')
+        self.assertEqual(got, {"ID": "arch"})
+
     def test_tool_package(self):
         self.assertEqual(system.tool_package("wimlib-imagex", "debian"), "wimtools")
         self.assertEqual(system.tool_package("mksquashfs", "arch"), "squashfs-tools")

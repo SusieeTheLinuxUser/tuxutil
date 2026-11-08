@@ -63,7 +63,8 @@ Agents run on the owner's daily PC, often unattended.
 - Bump `version` in `pyproject.toml` and `__version__` in `tuxutil/__init__.py` in a "Release vX.Y.Z" PR into `main`. The update check (`selfupdate.py`) reads `pyproject.toml` and compares it with GitHub's latest release, so a missed bump makes the app say the new version "is out" forever.
 - `run.sh` downloads the `main` branch tarball, not a tag, so whatever is on `main` ships the moment it merges.
 - After the PR merges: tag `main` (`git tag -a vX.Y.Z -m vX.Y.Z`), push the tag, then `gh release create` with short user-facing notes in the same style as the last release (the `curl … run.sh | sh` line, "New in this release", "Not tested yet"). No binary assets. Check it shows as Latest.
-- `dev` and `main` drift: some fixes land on `main` directly and some only on `dev`. Check `git log origin/main..origin/dev` before a release so nothing is left behind by surprise.
+- `dev` and `main` drift: some fixes land on `main` directly and some only on `dev`. The repo allows squash merges only, so their histories never match and `git log origin/main..origin/dev` always lists old commits. Compare content instead: `git diff origin/main origin/dev --stat`.
+- To sync (as done for v0.2.5): one PR into `main` that cherry-picks (`git cherry-pick -x`) the dev-only PR commits plus the version bump, and one PR into `dev` that cherry-picks the main-only commits plus the same bump. Done when `git diff origin/main origin/dev` is empty. Flash files (`flash.py`, the flash part of `gui.py`) need a real read on conflict, never "take one side".
 
 ## Definition of done
 Run the real thing, not only unit tests. Report in the PR what you actually ran and what you saw, including what failed or wasn't tested. Never claim a boot or install you didn't watch happen.

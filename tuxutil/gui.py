@@ -1222,6 +1222,14 @@ if HAS_PYSIDE6:
             self.doctor_banner.retry_requested.connect(self.load_doctor_info)
             layout.addWidget(self.doctor_banner)
 
+            # Shown only when a newer release exists; filled in by load_doctor_info.
+            self.lbl_update = QLabel()
+            self.lbl_update.setObjectName("hint")
+            self.lbl_update.setWordWrap(True)
+            self.lbl_update.setOpenExternalLinks(True)
+            self.lbl_update.setVisible(False)
+            layout.addWidget(self.lbl_update)
+
             sys_group = QGroupBox("This System")
             f_layout = QFormLayout(sys_group)
             self.lbl_distro_name = QLabel("Detecting...")
@@ -1276,6 +1284,15 @@ if HAS_PYSIDE6:
                 self.lbl_distro_family.setText(data.get("family", "Unknown"))
                 self.lbl_distro_id.setText(data.get("id", "Unknown"))
                 self.lbl_sidebar_distro.setText(data.get("name", ""))
+
+                tux = data.get("tuxutil") or {}
+                if tux.get("update_available"):
+                    self.lbl_update.setText(
+                        f"tuxutil {tux.get('latest')} is out — "
+                        f"<a href='{tux.get('update_url')}'>release page</a>")
+                    self.lbl_update.setVisible(True)
+                else:
+                    self.lbl_update.setVisible(False)
 
                 missing = data.get("missing", [])
                 self.tools_list.clear()
@@ -1514,6 +1531,9 @@ if HAS_PYSIDE6:
 
             # Hard rule: Passing `--confirm` is only ever done after that typed confirmation.
             cmd = ["flash", "write", iso_path, device_path, "--confirm", device_path, "--cancel-on-eof"]
+            # The disk picked, not just its path: a stick swapped since the list was read is refused.
+            if dev.get("id"):
+                cmd += ["--expect-id", dev["id"]]
             self.run_cli_job(
                 cmd,
                 f"Flashing {dev.get('model', 'Drive')} ({device_path})",

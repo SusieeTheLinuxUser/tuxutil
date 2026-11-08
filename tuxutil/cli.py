@@ -6,17 +6,22 @@ import shutil
 import subprocess
 import sys
 
-from . import __version__, apps, flash, gui, isodl, linuxiso, system, tweaks, winiso
+from . import __version__, apps, flash, gui, isodl, linuxiso, selfupdate, system, tweaks, winiso
 
 
 def cmd_doctor(args):
     distro = system.detect()
     missing = system.missing_tools(system.TOOL_PACKAGES)
+    tux = selfupdate.status()
     if args.json:
-        print(json.dumps({"id": distro.id, "name": distro.name, "family": distro.family, "missing": missing}))
+        print(json.dumps({
+            "id": distro.id, "name": distro.name, "family": distro.family,
+            "missing": missing, "tuxutil": tux,
+        }))
         return 0
     print(f"Distro: {distro.name} (family: {distro.family})")
     print("Missing tools: " + (", ".join(missing) or "none"))
+    print(selfupdate.describe(tux))
     if args.install and missing:
         if distro.family not in system.INSTALL_CMD:
             raise SystemExit(f"Don't know how to install packages on family '{distro.family}'.")

@@ -96,10 +96,9 @@
       ]
     ],
     "check": [
-      "grep",
-      "-qxF",
-      "compression-algorithm = zstd",
-      "/etc/systemd/zram-generator.conf"
+      "sh",
+      "-c",
+      "printf '%s\\n' '[zram0]' 'zram-size = min(ram / 2, 4096)' 'compression-algorithm = zstd' 'swap-priority = 100' | cmp -s - /etc/systemd/zram-generator.conf"
     ]
   },
   {
@@ -345,7 +344,7 @@
       [
         "sh",
         "-c",
-        "set -eu\nsrc=/etc/pacman.conf\nstate=/etc/tuxutil/pacman-parallel.line\ndesired='ParallelDownloads = 5'\npattern='^#?ParallelDownloads'\nmkdir -p /etc/tuxutil\nif [ ! -f \"$state\" ]; then\n    if grep -E -q \"$pattern\" \"$src\"; then\n        grep -E -m1 \"$pattern\" \"$src\" > \"$state\"\n    else\n        printf '%s\\n' __ABSENT__ > \"$state\"\n    fi\nfi\ntmp=$src.tuxutil.tmp\nawk -v repl=\"$desired\" -v pat=\"$pattern\" '\nBEGIN {done=0}\n$0 ~ pat && !done {print repl; done=1; next}\n{print}\nEND {if (!done) print repl}\n' \"$src\" > \"$tmp\"\nmv \"$tmp\" \"$src\"\n"
+        "set -eu\nsrc=/etc/pacman.conf\nstate=/etc/tuxutil/pacman-parallel.line\ndesired='ParallelDownloads = 5'\npattern='^#?ParallelDownloads'\nmkdir -p /etc/tuxutil\nif [ ! -f \"$state\" ]; then\n    if grep -E -q \"$pattern\" \"$src\"; then\n        grep -E -m1 \"$pattern\" \"$src\" > \"$state\"\n    else\n        printf '%s\\n' __ABSENT__ > \"$state\"\n    fi\nfi\ntmp=$src.tuxutil.tmp\nif grep -E -q \"$pattern\" \"$src\"; then has=1; else has=0; fi\n# With no line to replace, it goes under [options]: pacman ignores it in a repo section.\nawk -v repl=\"$desired\" -v pat=\"$pattern\" -v has=\"$has\" '\nBEGIN {done=0}\n!has && !done && /^\\[options\\]/ {print; print repl; done=1; next}\n$0 ~ pat && !done {print repl; done=1; next}\n{print}\nEND {if (!done) print repl}\n' \"$src\" > \"$tmp\"\nmv \"$tmp\" \"$src\"\n"
       ]
     ],
     "undo": [

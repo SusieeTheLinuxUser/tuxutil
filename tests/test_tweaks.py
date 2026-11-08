@@ -379,6 +379,35 @@ class LineUndoTest(unittest.TestCase):
             _run_relocated(catalog["pacman-multilib"], "undo", etc)
             self.assertEqual(conf.read_text(), "[multilib]\nInclude = /etc/pacman.d/mirrorlist\n")
 
+    def test_pacman_parallel_lands_in_options_when_absent(self):
+        # Appended at the end it would sit in the last repo section: pacman ignores it there and warns on every run.
+        tweak = {item["id"]: item for item in tweaks.load()}["pacman-parallel"]
+        stock = "[options]\nArchitecture = auto\n\n[core]\nInclude = /etc/pacman.d/mirrorlist\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            etc = Path(tmp) / "etc"
+            etc.mkdir()
+            conf = etc / "pacman.conf"
+            conf.write_text(stock)
+            _run_relocated(tweak, "apply", etc)
+            self.assertEqual(conf.read_text(), "[options]\nParallelDownloads = 5\nArchitecture = auto\n\n[core]\nInclude = /etc/pacman.d/mirrorlist\n")
+            _run_relocated(tweak, "undo", etc)
+            self.assertEqual(conf.read_text(), stock)
+
+    def test_zram_check_only_counts_its_own_config(self):
+        # A user's own config with the same zstd line must not read as applied: undo would delete it.
+        tweak = {item["id"]: item for item in tweaks.load()}["zram"]
+        ours = "[zram0]\nzram-size = min(ram / 2, 4096)\ncompression-algorithm = zstd\nswap-priority = 100\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = Path(tmp) / "zram-generator.conf"
+            check = [part.replace("/etc/systemd/zram-generator.conf", str(conf)) for part in tweak["check"]]
+            self.assertNotEqual(subprocess.run(check).returncode, 0)
+            conf.write_text("[zram0]\nzram-size = ram\ncompression-algorithm = zstd\n")
+            self.assertNotEqual(subprocess.run(check).returncode, 0)
+            conf.write_text(ours)
+            self.assertEqual(subprocess.run(check).returncode, 0)
+        # The check must match what apply writes, byte for byte.
+        self.assertIn(tweak["check"][2].split(" | ")[0], tweak["apply"][0][2])
+
     def test_dnf_undo_keeps_a_later_edit(self):
         tweak = next(item for item in tweaks.load() if item["id"] == "dnf-parallel")
         with tempfile.TemporaryDirectory() as tmp:

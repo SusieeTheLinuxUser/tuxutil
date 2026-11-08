@@ -120,7 +120,8 @@ def plan(apps, distro, installed=None):
     """Native packages in one group, flatpak ids in another. Native wins when both exist.
 
     With installed=(native names, flatpak ids), an app that has any variant installed
-    plans exactly those, so removing it removes what is really there.
+    plans exactly those, so removing it removes what is really there. An app with
+    nothing installed is skipped, so one stale request cannot fail the whole batch.
     """
     native, flatpaks, unavailable = [], [], []
     for app in apps:
@@ -131,7 +132,8 @@ def plan(apps, distro, installed=None):
             if have_native or have_flatpak:
                 native.extend(have_native)
                 flatpaks.extend(have_flatpak)
-                continue
+            # Nothing of this app is installed, so there is nothing to remove.
+            continue
         if pkgs:
             native.extend(pkgs)
         elif app.get("flatpak"):

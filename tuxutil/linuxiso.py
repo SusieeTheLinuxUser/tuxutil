@@ -151,7 +151,7 @@ def cmd_build(args):
         raise SystemExit(f"Overlay directory not found: {args.overlay}")
     if args.first_boot and not Path(args.first_boot).is_file():
         raise SystemExit(f"First-boot script not found: {args.first_boot}")
-    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap", "newgidmap"])
+    system.require_tools(["xorriso", "unsquashfs", "mksquashfs", "unshare", "newuidmap", "newgidmap", "mdir", "mcopy"])
     err = space_error(shutil.disk_usage(out.parent).free, bytes_needed(iso.stat().st_size))
     if err:
         raise SystemExit(err + f" ({out.parent})")
@@ -273,6 +273,14 @@ def describe(paths, *, label="", disk_info="", treeinfo="", boot_text="", image_
         elif image_kind == "ext4":
             supported = False
             notes.append("Live root is an ext4 image. This host has no rootless ext4 writer.")
+        elif image_kind == "nested":
+            supported = False
+            notes.append("Live root is an ext4 LiveOS/rootfs.img nested in the squashfs "
+                         "(older Fedora), which isn't supported.")
+        elif image_kind == "unchecked":
+            supported = False
+            notes.append("Couldn't list the squashfs with unsquashfs to check for a nested LiveOS/rootfs.img. "
+                         "Check that squashfs-tools is installed and the ISO is readable.")
         if family == "fedora" and _immutable_text(boot_text):
             supported = False
             notes.append("Immutable ostree image (Bazzite, Silverblue, and similar). Not a writable live root.")
@@ -336,8 +344,10 @@ def guess_arch(paths):
                         ("arm64", "aarch64"), ("i686", "i386"), ("i386", "i386")):
         if token in blob:
             return name
-    if "bootx64.efi" in blob or "bootx64.efi" in blob:
+    if "bootx64.efi" in blob:
         return "x86_64"
+    if "bootaa64.efi" in blob:
+        return "aarch64"
     return "unknown"
 
 
@@ -659,14 +669,20 @@ def extract_file(iso, inner, dest):
     run(["xorriso", "-osirrox", "on", "-indev", str(iso), "-extract", inner, str(dest)])
 
 
-def image_head(iso, inner, size=4096):
+def _file_offset(iso, inner):
+    """Byte offset of a file's data inside the ISO, or None."""
     result = subprocess.run(["xorriso", "-indev", str(iso), "-find", inner, "-exec", "report_lba"],
                             capture_output=True, text=True)
     match = re.search(r"File data lba:\s*\d+\s*,\s*(\d+)\s*,", result.stdout)
-    if not match:
+    return int(match.group(1)) * 2048 if match else None
+
+
+def image_head(iso, inner, size=4096):
+    offset = _file_offset(iso, inner)
+    if offset is None:
         return b""
     with open(iso, "rb") as handle:
-        handle.seek(int(match.group(1)) * 2048)
+        handle.seek(offset)
         return handle.read(size)
 
 
@@ -721,7 +737,20 @@ def _primary_kind(iso, paths):
     layout = detect_layout(paths)
     if not layout["squashfs"]:
         return ""
-    return sniff_image(image_head(iso, layout["squashfs"]))
+    kind = sniff_image(image_head(iso, layout["squashfs"]))
+    if kind == "squashfs" and layout["family"] == "fedora":
+        # Older Fedora (before the 42 switch to erofs) wraps an ext4 LiveOS/rootfs.img in the squashfs. List it in place.
+        if not shutil.which("unsquashfs"):
+            return "unchecked"
+        listing = subprocess.run(["unsquashfs", "-o", str(_file_offset(iso, layout["squashfs"])),
+                                  "-l", "-d", "", str(iso), "LiveOS/rootfs.img"],
+                                 capture_output=True, text=True, errors="replace")
+        if listing.returncode != 0:
+            _warn(f"unsquashfs failed: {listing.stderr.strip()}")
+            return "unchecked"
+        if re.search(r"(?m)^/?LiveOS/rootfs\.img$", listing.stdout):
+            return "nested"
+    return kind
 
 
 def _read_small(iso, inner):
@@ -828,7 +857,8 @@ def _materialize(iso, info, scratch):
         return _materialize_layered(iso, layers, scratch)
     image = scratch / "image"
     extract_file(iso, info["squashfs"], image)
-    kind = sniff_image(image.read_bytes()[:4096])
+    with open(image, "rb") as f:
+        kind = sniff_image(f.read(4096))
     root = scratch / "root"
     pseudo = None
     iso_path = info["squashfs"]
@@ -989,9 +1019,15 @@ def _apply_identity(root, args):
             rows = []
             replaced = False
             for line in hosts.read_text(errors="replace").splitlines():
-                if line.startswith("127.0.1.1") or line.startswith("127.0.0.1 ") and args.hostname in line.split():
+                fields = line.split()
+                if fields[:1] == ["127.0.1.1"]:
                     rows.append(f"127.0.1.1\t{args.hostname}")
                     replaced = True
+                elif fields[:1] == ["127.0.0.1"] and args.hostname != "localhost" and args.hostname in fields[1:]:
+                    # Left on the loopback line, the hostname would resolve there, not to 127.0.1.1.
+                    names = [f for f in fields[1:] if f != args.hostname]
+                    if names:
+                        rows.append("\t".join([fields[0], " ".join(names)]))
                 else:
                     rows.append(line)
             if not replaced:
@@ -1020,7 +1056,8 @@ def _install_first_boot(root, script):
     shutil.copyfile(script, target)
     target.chmod(0o755)
     wrapper = _inside(root, "usr/local/sbin/tuxutil-firstboot")
-    wrapper.write_text("#!/bin/sh\nexec /bin/sh /usr/local/lib/tuxutil/first-boot\n")
+    # Run it directly so its own #! line (bash, python...) is used; sh still runs one without it.
+    wrapper.write_text("#!/bin/sh\nexec /usr/local/lib/tuxutil/first-boot\n")
     wrapper.chmod(0o755)
     _inside(root, "etc/systemd/system/tuxutil-firstboot.service").write_text(
         "[Unit]\n"

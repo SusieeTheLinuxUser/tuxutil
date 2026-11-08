@@ -62,6 +62,7 @@ TOOL_PACKAGES = {
     "sfdisk": {"default": "util-linux", "debian": "fdisk"},
     "mkfs.vfat": {"default": "dosfstools"},
     "mcopy": {"default": "mtools"},
+    "mdir": {"default": "mtools"},
     "lsblk": {"default": "util-linux"},
     "unshare": {"default": "util-linux"},
     "newuidmap": {"default": "shadow", "debian": "uidmap", "fedora": "shadow-utils", "alpine": "shadow-subids"},
@@ -86,7 +87,10 @@ def parse_os_release(text):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, val = line.split("=", 1)
-            parts = shlex.split(val)
+            try:
+                parts = shlex.split(val)
+            except ValueError:
+                continue  # unbalanced quote: skip the broken line
             out[key] = parts[0] if parts else ""
     return out
 

@@ -83,6 +83,13 @@ class TestGuiNoPySide6(unittest.TestCase):
         self.assertNotIn("TopSecret456", masked)
         self.assertIn("******", masked)
 
+    def test_a_path_containing_secret_is_not_masked_but_a_secret_flag_is(self):
+        cmd = ["winiso", "build", "/x/my-secret.iso", "-o", "/x/out.iso"]
+        self.assertEqual(gui.mask_command_for_log(cmd), shlex.join(cmd))
+        masked = gui.mask_command_for_log(["x", "--password", "hunter2"])
+        self.assertNotIn("hunter2", masked)
+        self.assertIn("******", masked)
+
     def test_signed_link_is_masked_in_the_log(self):
         masked = gui.mask_command_for_log(["tuxutil", "iso", "download", "https://example.test/a.iso?sig=abc&t=1"])
         self.assertNotIn("abc", masked)
@@ -174,6 +181,42 @@ class TestTuxUtilGui(unittest.TestCase):
         tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["6", "Windows 11 Pro"]))
         tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
         self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "6"])
+
+    def test_clicking_an_edition_fills_a_choice_typed_edition_combo(self):
+        # A schema may type --edition as "choice" (the fake CLI does); that builds a
+        # non-editable combo listing edition names, so a click must select by name.
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([
+            {"flag": "--edition", "type": "choice", "label": "Target Windows Edition",
+             "default": "Windows 11 Home",
+             "choices": ["Windows 11 Home", "Windows 11 Pro", "Windows 11 Enterprise"]},
+        ])
+        tab.editions_tree.addTopLevelItem(gui.QTreeWidgetItem(["2", "Windows 11 Pro"]))
+        tab.editions_tree.setCurrentItem(tab.editions_tree.topLevelItem(0))
+        self.assertEqual(tab.dynamic_form.collect_args(), ["--edition", "Windows 11 Pro"])
+
+    def test_changing_the_iso_clears_the_stale_edition(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--edition", "type": "str", "label": "E"}])
+        tab.dynamic_form.fields["--edition"][1].setText("6")
+        tab.iso_path_edit.setText("/fake/other.iso")
+        self.assertEqual(tab.dynamic_form.fields["--edition"][1].text(), "")
+
+    def test_retry_loads_options_when_the_form_is_empty(self):
+        tab = self.win.tab_winiso
+        tab.dynamic_form = None
+        with patch.object(tab, "load_options") as load_options:
+            tab.on_retry()
+        load_options.assert_called_once()
+
+    def test_retry_refreshes_info_when_the_form_is_there(self):
+        tab = self.win.tab_linuxiso
+        tab.dynamic_form = gui.DynamicFormWidget([{"flag": "--pkg", "type": "str", "label": "P"}])
+        with patch.object(tab, "load_options") as load_options, \
+                patch.object(tab, "on_refresh_info") as refresh:
+            tab.on_retry()
+        load_options.assert_not_called()
+        refresh.assert_called_once()
 
     def test_download_catalog_is_split_by_kind(self):
         self.win.tabs.setCurrentIndex(5)
@@ -422,6 +465,51 @@ class TestTuxUtilGui(unittest.TestCase):
         # Test flash execution
         self.win.btn_flash_write.click()
         self.assertTrue(wait_until(lambda: "Flash completed" in self.win.log_text.toPlainText()))
+
+    def test_flash_button_stays_disabled_while_a_job_runs(self):
+        self.win.tabs.setCurrentIndex(6)
+        self.assertTrue(wait_until(lambda: len(self.win.raw_devices) > 0))
+        sdb_idx = next(i for i, d in enumerate(self.win.raw_devices) if d["path"] == "/dev/sdb")
+        self.win.device_combo.setCurrentIndex(sdb_idx)
+        pump_events(20)
+        self.win.flash_iso_edit.setText("/fake/path/live.iso")
+        self.win.confirm_input.setText("/dev/sdb")
+        pump_events(20)
+        self.assertTrue(self.win.btn_flash_write.isEnabled())
+
+        # While any job runs, the destructive button and Refresh Devices stay disabled,
+        # however valid the ISO, device and typed confirmation are.
+        self.win.run_cli_job(["test-long", "0.01"], "Some Job")
+        pump_events(80)
+        self.assertIsNotNone(self.win.active_process)
+        self.assertFalse(self.win.btn_flash_write.isEnabled())
+        self.assertFalse(self.win.btn_refresh_devices.isEnabled())
+
+        # And both come back once the job has ended.
+        self.assertTrue(wait_until(lambda: self.win.active_process is None))
+        pump_events(20)
+        self.assertTrue(self.win.btn_flash_write.isEnabled())
+        self.assertTrue(self.win.btn_refresh_devices.isEnabled())
+
+    def test_a_refresh_during_a_flash_does_not_touch_the_device_list(self):
+        self.win.tabs.setCurrentIndex(6)
+        self.assertTrue(wait_until(lambda: len(self.win.raw_devices) > 0))
+        before_devices = self.win.raw_devices
+        before_texts = [self.win.device_combo.itemText(i) for i in range(self.win.device_combo.count())]
+
+        self.win.active_process = object()  # a dummy; only None-ness matters
+        self.win.active_job_is_flash = True
+        try:
+            self.win.load_flash_devices()
+            # The fake CLI answers; the stale refresh must not have replaced anything.
+            self.assertTrue(wait_until(lambda: not self.win._active_queries))
+            pump_events(50)
+            self.assertIs(self.win.raw_devices, before_devices)
+            after_texts = [self.win.device_combo.itemText(i) for i in range(self.win.device_combo.count())]
+            self.assertEqual(after_texts, before_texts)
+        finally:
+            self.win.active_process = None
+            self.win.active_job_is_flash = False
 
     def test_long_job_progress_and_cancel(self):
         self.win.run_cli_job(["test-long", "0.05"], "Slow Job")
